@@ -1,0 +1,49 @@
+name: Build APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Web files
+        run: |
+          mkdir -p www
+          cp "$(ls *.html | head -n1)" www/index.html
+      - name: Install Capacitor
+        run: |
+          npm init -y
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/local-notifications@7
+      - name: Config
+        run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.pmk.schedule.test",
+            "appName": "Расписание ПМК Тест",
+            "webDir": "www",
+            "plugins": { "CapacitorHttp": { "enabled": true } }
+          }
+          EOF
+      - name: Add Android
+        run: |
+          npx cap add android
+          sed -i 's#</manifest>#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><uses-permission android:name="android.permission.USE_EXACT_ALARM"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/></manifest>#' android/app/src/main/AndroidManifest.xml
+          npx cap sync android
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pmk-test-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
