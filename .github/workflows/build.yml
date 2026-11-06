@@ -22,34 +22,47 @@ jobs:
       - name: Web files
         run: |
           mkdir -p www
-          cp "$(ls *.html | head -n1)" www/index.html
+          if [ -f index.html ]; then cp index.html www/index.html; else cp "$(ls *.html | head -n1)" www/index.html; fi
+          cp -r runners www/runners
       - name: Install Capacitor
         run: |
           npm init -y
-          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/local-notifications@7
+          npm i --legacy-peer-deps @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/local-notifications@7 @capacitor/background-runner@2.1.0
       - name: Config
         run: |
-          cat > capacitor.config.json <<EOF
+          cat > capacitor.config.json <<EOF2
           {
             "appId": "$APP_ID",
             "appName": "$APP_NAME",
             "webDir": "www",
-            "plugins": { "CapacitorHttp": { "enabled": true } }
+            "plugins": {
+              "CapacitorHttp": { "enabled": true },
+              "BackgroundRunner": {
+                "label": "com.pmk.schedule.check",
+                "src": "runners/runner.js",
+                "event": "checkSchedule",
+                "repeat": true,
+                "interval": 15,
+                "autoStart": true
+              }
+            }
           }
-          EOF
+          EOF2
       - name: Add Android
         run: |
           npx cap add android
           sed -i 's#</manifest>#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><uses-permission android:name="android.permission.USE_EXACT_ALARM"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/></manifest>#' android/app/src/main/AndroidManifest.xml
           sed -i "s/versionCode 1/versionCode $((1000 + GITHUB_RUN_NUMBER))/" android/app/build.gradle
           sed -i "s/versionName \"1.0\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
+          sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs', '../../node_modules/@capacitor/background-runner/android/src/main/libs'#" android/app/build.gradle
+          grep -n "background-runner" android/app/build.gradle
           npx cap sync android
       - name: Icon (только если в репозитории есть PNG)
         run: |
           if ls *.png >/dev/null 2>&1; then
             mkdir -p assets
             cp "$(ls *.png | head -n1)" assets/icon.png
-            npm i @capacitor/assets
+            npm i --legacy-peer-deps @capacitor/assets
             npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff'
           fi
       - name: Build APK
