@@ -643,13 +643,15 @@ b.innerHTML=`<div class="updb"><span class="ut"><b>${upd.test?'Тест · ':''}
 }
 const setUpdUI=(st,pct,msg)=>{updUI={st,pct:pct||0,msg:msg||''};showUpd(true)};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const AU=(()=>{try{return native&&CAP&&CAP.registerPlugin?CAP.registerPlugin('ApkUpdate'):null}catch(e){return null}})();
+const AU=native?(CAP?.Plugins?.ApkUpdate||(()=>{try{return CAP&&CAP.registerPlugin?CAP.registerPlugin('ApkUpdate'):null}catch(e){return null}})()):null;   // как LocalNotifications и BackgroundRunner: сначала Capacitor.Plugins
+const NOINST='В этой сборке нет встроенного установщика. Поставьте свежий APK вручную один раз — дальше обновления пойдут внутри приложения.';
 let updBusy=false;
 function endUpdTest(){if(upd&&upd.test){upd=updSaved;updSaved=null}setUpdUI('idle')}   // тест закончен — возвращаем настоящее обновление, если оно было
 async function installUpd(){   // скачать APK внутри приложения и открыть установщик Android — браузер не открывается
 if(!upd||updBusy)return;
 const u=upd;
-if(!u.sim&&(!AU||!u.apk)){openUrl(u.url);return}   // ссылка не на APK (или это веб-версия) — скачивать нечего
+if(!u.sim&&(!native||!u.apk)){openUrl(u.url);return}   // веб-версия или ссылка не на APK — скачивать нечего
+if(!u.sim&&!AU){setUpdUI('err',0,NOINST);return}
 updBusy=true;let h=null;
 try{
 if(u.sim){   // тест из меню разработчика: имитация загрузки и установщика, ничего не ставится
@@ -676,7 +678,7 @@ else setUpdUI('idle');
 }catch(e){
 u.got=false;
 const m=String(e&&e.message||e);
-setUpdUI('err',0,/not implemented|UNIMPLEMENTED/i.test(m)?'В этой установленной сборке нет встроенного установщика. Один раз поставьте свежий APK вручную — дальше обновления пойдут внутри приложения.':'Не удалось обновить: '+m);
+setUpdUI('err',0,/not implemented|UNIMPLEMENTED/i.test(m)?NOINST:'Не удалось обновить: '+m);
 }finally{try{h&&h.remove()}catch(e){}updBusy=false}
 }
 $('updbox').onclick=e=>{
@@ -695,7 +697,8 @@ $('dev').classList.remove('show');showUpd(true);
 toast('Тестовое обновление','Нажмите «Обновить» на баннере сверху');
 }
 async function devTestDownload(){   // настоящая загрузка последнего APK, но без запуска установщика
-if(!AU){toast('Только в Android-приложении','В браузере встроенной загрузки нет');return}
+if(!native){toast('Только в Android-приложении','В браузере встроенной загрузки нет');return}
+if(!AU){toast('Установщика нет в этой сборке','Поставьте свежий APK вручную');return}
 if(updBusy){toast('Обновление уже идёт','');return}
 try{
 const j=await getJSON(/github\.com\//.test(updUrl)?updUrl:updUrl+(updUrl.includes('?')?'&':'?')+'t='+Date.now());
@@ -959,6 +962,7 @@ h+=line('открыт',`${st.day} · ${d?d.lessons.length+' зан.':'нет д�
 h+=line('выбрано',`${st.mode}: ${st.ent[st.mode]||'—'} · занятий в выборке: ${curList().length}`);
 h+=line('сущности',`групп ${entities('group').length} · преп. ${entities('teacher').length} · ауд. ${entities('aud').length}`);
 h+=line('дизайн','полный · без лайт-режимов');
+h+=line('установщик',AU?'есть (ApkUpdate)':native?'НЕТ — плагин не найден':'только в Android')
 h+=line('частота экрана',window.__hz?`${window.__hz} Гц (замер ${window.__hzRaw||'?'} Гц)`:'измеряется…');
 h+=line('производительность',`render ${devPerf.toFixed(1)} мс · DOM ${document.getElementsByTagName('*').length} узлов · журнал ${devLog.length}`);
 h+=line('кэш',`${days.size} дн. · формат даты: ${goodPat>=0?goodPat:'?'} · dateOk=${dateOk} · fail=${dateFail} · netOff=${netOff}`);
