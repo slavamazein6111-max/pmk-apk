@@ -1,7 +1,5 @@
 name: Build APK
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 concurrency:
   group: build-apk
@@ -212,6 +210,11 @@ jobs:
           import android.graphics.Bitmap;
           import android.graphics.Canvas;
           import android.graphics.Color;
+          import android.graphics.LinearGradient;
+          import android.graphics.RadialGradient;
+          import android.graphics.Shader;
+          import android.graphics.PorterDuff;
+          import android.graphics.PorterDuffXfermode;
           import android.graphics.Paint;
           import android.graphics.RectF;
           import android.os.Bundle;
@@ -236,7 +239,7 @@ jobs:
               static final Locale RU = new Locale("ru");
 
               static class L { int a, b, n; boolean k; String d, room, t; }
-              static class T { int bg, sf, tx, mu, di, ac, onAc, alpha; }
+              static class T { int bg, sf, tx, mu, di, ac, onAc, alpha, g0, g1, g2, g3, ga, gb; boolean light; }
               static class Pick { L l; int off; boolean cur; Calendar day; }
 
               // 0 строка, 1 следующая пара, 2 сегодня, 3 завтра, 4 неделя
@@ -288,6 +291,13 @@ jobs:
                   r.mu = mix(r.tx, r.bg, 0.62f);
                   r.di = mix(r.tx, r.bg, 0.34f);
                   r.onAc = lum(r.ac) > 150 ? 0xFF111111 : 0xFFFFFFFF;
+                  r.g0 = col(t, "g0", r.bg);
+                  r.g1 = col(t, "g1", r.bg);
+                  r.g2 = col(t, "g2", mix(r.ac, r.bg, 0.16f));
+                  r.g3 = col(t, "g3", mix(r.ac, r.bg, 0.38f));
+                  r.ga = col(t, "ga", r.ac);
+                  r.gb = col(t, "gb", r.ac);
+                  r.light = t != null && t.optInt("lt", 0) == 1;
                   int o = d.optInt("wo", 85);
                   if (o < 35) o = 35;
                   if (o > 100) o = 100;
@@ -402,6 +412,41 @@ jobs:
                   return b;
               }
 
+              static int withA(int c, float a) {
+                  return Color.argb((int) (255 * a), Color.red(c), Color.green(c), Color.blue(c));
+              }
+
+              // «стеклянный» фон: тот же градиент с цветными свечениями, что и у приложения, + блик сверху и тонкая рамка
+              static Bitmap glass(int w, int h, float r, float stroke, T t) {
+                  Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                  Canvas cv = new Canvas(b);
+                  Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  RectF rf = new RectF(0, 0, w, h);
+                  p.setShader(new LinearGradient(0, 0, 0, h, new int[] { t.g0, t.g1, t.g2, t.g3 }, new float[] { 0f, 0.38f, 0.72f, 1f }, Shader.TileMode.CLAMP));
+                  cv.drawRect(rf, p);
+                  p.setShader(new RadialGradient(0, h, w * 0.8f, withA(t.ga, 0.55f), withA(t.ga, 0f), Shader.TileMode.CLAMP));
+                  cv.drawRect(rf, p);
+                  p.setShader(new RadialGradient(w, h, w * 0.7f, withA(t.gb, 0.42f), withA(t.gb, 0f), Shader.TileMode.CLAMP));
+                  cv.drawRect(rf, p);
+                  p.setShader(new RadialGradient(w * 0.9f, h * 0.12f, w * 0.5f, withA(t.ac, 0.2f), withA(t.ac, 0f), Shader.TileMode.CLAMP));
+                  cv.drawRect(rf, p);
+                  int hi = t.light ? 0xFFFFFFFF : 0xFFFFFFFF;
+                  p.setShader(new LinearGradient(0, 0, 0, h * 0.55f, withA(hi, t.light ? 0.55f : 0.13f), withA(hi, 0f), Shader.TileMode.CLAMP));
+                  cv.drawRect(rf, p);
+                  p.setShader(null);
+                  Paint mp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  mp.setColor(0xFFFFFFFF);
+                  mp.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
+                  cv.drawRoundRect(rf, r, r, mp);
+                  Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  sp.setStyle(Paint.Style.STROKE);
+                  sp.setStrokeWidth(stroke);
+                  sp.setColor(t.light ? withA(t.tx, 0.14f) : withA(0xFFFFFFFF, 0.22f));
+                  float k = stroke / 2f;
+                  cv.drawRoundRect(new RectF(k, k, w - k, h - k), r - k, r - k, sp);
+                  return b;
+              }
+
               static void tint(RemoteViews rv, int id, int color) {
                   rv.setInt(id, "setColorFilter", color | 0xFF000000);
               }
@@ -486,7 +531,7 @@ jobs:
               }
 
               // mode 0: сегодня (если пары кончились — ближайший день), mode 1: следующий учебный день
-              static void bindList(Context c, RemoteViews rv, JSONObject data, T t, int mode, int hDp) {
+              static void bindList(Context c, RemoteViews rv, JSONObject data, T t, int mode, int hDp, int wDp) {
                   Calendar now = Calendar.getInstance();
                   int nm = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
                   String name = data.optString("name", "");
@@ -495,6 +540,7 @@ jobs:
                   rv.setTextColor(R.id.w_date, t.mu);
                   rv.setTextColor(R.id.w_group, t.ac);
                   rv.setTextColor(R.id.w_empty, t.mu);
+                  rv.setViewVisibility(R.id.w_group, wDp > 0 && wDp < 230 ? View.GONE : View.VISIBLE);
                   if (name.isEmpty()) {
                       rv.setTextViewText(R.id.w_day, "Расписание ПМК");
                       rv.setTextViewText(R.id.w_date, "");
@@ -551,7 +597,8 @@ jobs:
                       row.setTextColor(R.id.ra, cur ? t.ac : past ? t.di : t.mu);
                       tint(row, R.id.rbar, cur ? t.ac : past ? mix(t.tx, t.bg, 0.16f) : mix(t.ac, t.bg, 0.5f));
                       if (cur) {
-                          tint(row, R.id.rbg, mix(t.ac, t.bg, 0.2f));
+                          tint(row, R.id.rbg, t.ac);
+                          row.setInt(R.id.rbg, "setImageAlpha", t.light ? 60 : 72);
                           row.setViewVisibility(R.id.rbg, View.VISIBLE);
                       } else {
                           row.setViewVisibility(R.id.rbg, View.GONE);
@@ -611,7 +658,7 @@ jobs:
               }
 
               // ---------- сборка ----------
-              static RemoteViews build(Context c, int kind, int hDp) {
+              static RemoteViews build(Context c, int kind, int wDp, int hDp) {
                   JSONObject data = load(c);
                   T t = theme(data);
                   int layout;
@@ -622,13 +669,14 @@ jobs:
                       default: layout = R.layout.widget_today; break;
                   }
                   RemoteViews rv = new RemoteViews(c.getPackageName(), layout);
-                  rv.setInt(R.id.bg, "setColorFilter", t.bg | 0xFF000000);
+                  float pxdp = Math.min(c.getResources().getDisplayMetrics().density, 640f / Math.max(wDp, hDp));
+                  rv.setImageViewBitmap(R.id.bg, glass(Math.round(wDp * pxdp), Math.round(hDp * pxdp), 26 * pxdp, Math.max(1f, 1.2f * pxdp), t));
                   rv.setInt(R.id.bg, "setImageAlpha", t.alpha);
                   switch (kind) {
                       case 0: bindCompact(c, rv, data, t); break;
                       case 1: bindNext(c, rv, data, t); break;
-                      case 2: bindList(c, rv, data, t, 0, hDp); break;
-                      case 3: bindList(c, rv, data, t, 1, hDp); break;
+                      case 2: bindList(c, rv, data, t, 0, hDp, wDp); break;
+                      case 3: bindList(c, rv, data, t, 1, hDp, wDp); break;
                       default: bindWeek(c, rv, data, t); break;
                   }
                   Intent li = c.getPackageManager().getLaunchIntentForPackage(c.getPackageName());
@@ -642,8 +690,16 @@ jobs:
                   try {
                       Bundle o = m.getAppWidgetOptions(id);
                       boolean land = c.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
-                      int h = o == null ? 0 : o.getInt(land ? AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT : AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
-                      m.updateAppWidget(id, build(c, kind, h));
+                      int w = 0, h = 0;
+                      if (o != null) {
+                          w = o.getInt(land ? AppWidgetManager.OPTION_APPWIDGET_MAX_WIDTH : AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+                          h = o.getInt(land ? AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT : AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
+                      }
+                      int[] dw = { 250, 120, 250, 250, 250 };
+                      int[] dh = { 56, 120, 270, 270, 120 };
+                      if (w < 40) w = dw[kind];
+                      if (h < 40) h = dh[kind];
+                      m.updateAppWidget(id, build(c, kind, w, h));
                   } catch (Exception e) {
                       try {
                           RemoteViews rv = new RemoteViews(c.getPackageName(), R.layout.widget_compact);
@@ -763,7 +819,7 @@ jobs:
           cat > $R/drawable/widget_bg.xml <<'EOF9'
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-              <solid android:color="#FFFFFFFF"/>
+              <solid android:color="#FF1C0B0E"/>
               <corners android:radius="26dp"/>
           </shape>
           EOF9
@@ -945,7 +1001,7 @@ jobs:
                   android:textColor="#99FFFFFF" android:textSize="10sp" android:maxLines="1"/>
           </LinearLayout>
           EOF12
-          mkinfo() { # имя minW minH cellW cellH resizeW resizeH resizeMode
+          mkinfo() { # имя minW minH cellW cellH minResW minResH resizeMode layout maxResW maxResH
           cat > $R/xml/$1.xml <<EOF13
           <?xml version="1.0" encoding="utf-8"?>
           <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
@@ -953,6 +1009,8 @@ jobs:
               android:minHeight="$3dp"
               android:minResizeWidth="$6dp"
               android:minResizeHeight="$7dp"
+              android:maxResizeWidth="${10}dp"
+              android:maxResizeHeight="${11}dp"
               android:targetCellWidth="$4"
               android:targetCellHeight="$5"
               android:updatePeriodMillis="1800000"
@@ -961,11 +1019,11 @@ jobs:
               android:widgetCategory="home_screen"/>
           EOF13
           }
-          mkinfo widget_compact_info 250 40 4 1 110 40 "horizontal" widget_compact
-          mkinfo widget_next_info 110 110 2 2 110 110 "horizontal|vertical" widget_next
-          mkinfo widget_today_info 250 250 4 4 180 110 "horizontal|vertical" widget_today
-          mkinfo widget_tomorrow_info 250 250 4 4 180 110 "horizontal|vertical" widget_today
-          mkinfo widget_week_info 250 110 4 2 250 110 "horizontal" widget_week
+          mkinfo widget_compact_info 250 40 4 1 110 40 "horizontal|vertical" widget_compact 420 100
+          mkinfo widget_next_info 110 110 2 2 110 110 "horizontal|vertical" widget_next 250 250
+          mkinfo widget_today_info 250 250 4 4 180 140 "horizontal|vertical" widget_today 420 420
+          mkinfo widget_tomorrow_info 250 250 4 4 180 140 "horizontal|vertical" widget_today 420 420
+          mkinfo widget_week_info 250 110 4 2 250 100 "horizontal|vertical" widget_week 420 180
           python3 - <<'PY'
           p='android/app/src/main/AndroidManifest.xml'
           s=open(p,encoding='utf-8').read()
