@@ -2,6 +2,22 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>
+/*const APP_VERSION='0.5.0'*/
+window.HTML_REV=2;
+(function(){try{
+if(window.__pmkOta)return;
+var o=JSON.parse(localStorage.getItem('pmk-ota')||'null');
+if(!o||!o.html||!(o.rev>window.HTML_REV))return;
+var tr=+localStorage.getItem('pmk-ota-try')||0;
+if(tr>=2){localStorage.removeItem('pmk-ota');localStorage.setItem('pmk-ota-try','0');return}
+localStorage.setItem('pmk-ota-try',String(tr+1));
+var K='const APP_VERSION',m=(document.currentScript.textContent.match(new RegExp(K+"='([^']*)'"))||[])[1],h=o.html;
+if(m)h=h.replace(new RegExp(K+"='[^']*'",'g'),K+"='"+m+"'");
+window.__pmkOta=o.rev;
+document.open();document.write(h);document.close();
+}catch(e){}})();
+</script>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#4f46e5">
@@ -50,6 +66,18 @@ body.rev main{transition:opacity .6s ease-out .38s,transform .8s cubic-bezier(.2
 .brand{transition:opacity .25s linear}
 .brand i{color:var(--acc2)}
 @media (prefers-reduced-motion:reduce){.sp-c{animation-duration:.01s}}
+
+#stale{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;padding:24px;padding-top:calc(24px + env(safe-area-inset-top));padding-bottom:calc(24px + env(safe-area-inset-bottom));background:rgba(11,4,5,.95);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);animation:f .2s}
+#stale .stl-c{width:100%;max-width:380px;text-align:center}
+#stale .stl-i{width:64px;height:64px;margin:0 auto 18px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-weight:800;font-size:32px;line-height:64px}
+#stale h2{margin:0 0 10px;font-size:24px;letter-spacing:-.02em}
+#stale p{margin:0 0 10px;color:var(--muted);font-size:15px;line-height:1.45}
+#stale .stl-b{margin-top:14px;width:100%;padding:14px 18px;border-radius:99px;background:var(--text);color:var(--bg);font-weight:700;font-size:16px}
+#stale .stl-b:disabled{opacity:.6}
+#stale .stl-bar{height:6px;border-radius:9px;background:var(--line);overflow:hidden;margin-top:14px}
+#stale .stl-bar i{display:block;height:100%;background:var(--accent);transition:width .2s}
+#stale .stl-e{margin-top:12px;font-size:13px;line-height:1.35;color:var(--warn)}
+#stale .stl-e button,#stale .stl-x{display:block;margin:10px auto 0;color:var(--muted);font-size:13px;text-decoration:underline}
 </style>
 </head>
 <body class="pre hb">
@@ -128,7 +156,7 @@ let set={on:false,main:'',mainName:'',lead:5,eve:true,eveT:'20:00',morn:true,mor
 try{set={...set,...JSON.parse(localStorage.getItem('pmk-set')||'{}')}}catch(e){}
 set.pred=false;
 document.addEventListener('visibilitychange',()=>document.documentElement.classList.toggle('hid',document.hidden));
-const APP_VERSION='0.4.3';
+const APP_VERSION='0.5.0';
 const TG_URL='https://t.me/slvdevvv';
 const hx=h=>{h=h.replace('#','');if(h.length==3)h=[...h].map(c=>c+c).join('');return[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
 const mix=(a,b,t)=>{const A=hx(a),B=hx(b);return'#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
@@ -586,7 +614,8 @@ BR.dispatchEvent({label:RUNNER,event:'saveState',details:{v:2,api:API,dp:goodPat
 const PW=native?(CAP?.Plugins?.PmkWidget||(()=>{try{return CAP&&CAP.registerPlugin?CAP.registerPlugin('PmkWidget'):null}catch(e){return null}})()):null;   // виджеты на главном экране Android
 let _wSig='';
 function widgetTheme(){const w=WALLS.find(x=>x.id===set.wall)||WALLS[0],v=w.v;
-return v?{bg:v['--bg'],sf:v['--surface'],tx:v['--text'],ac:v['--accent']}:{bg:'#0b0405',sf:'#1c0b0e',tx:'#ffffff',ac:'#ff5a5f'}}
+return v?{bg:v['--bg'],sf:v['--surface'],tx:v['--text'],ac:v['--accent'],g0:v['--g0'],g1:v['--g1'],g2:v['--g2'],g3:v['--g3'],ga:v['--accent'],gb:v['--accent'],lt:w.dark?0:1}
+:{bg:'#0b0405',sf:'#1c0b0e',tx:'#ffffff',ac:'#ff5a5f',g0:'#040102',g1:'#12050a',g2:'#4a0b13',g3:'#a81f20',ga:'#ea3a30',gb:'#a3206f',lt:0}}
 function syncWidget(){
 if(!PW)return;
 try{
@@ -698,19 +727,44 @@ try{const u=localStorage.getItem('pmk-upd-url');if(u)updUrl=u}catch(e){}
 const vcmp=(a,b)=>{const x=String(a).split('.').map(Number),y=String(b).split('.').map(Number);
 for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0};
 let updUI={st:'idle',pct:0,msg:''},updSaved=null;
+const STALE_MS=86400000;let staleForce=false;   // сутки с момента, когда приложение впервые увидело новую версию
+function markStale(v){try{const o=JSON.parse(localStorage.getItem('pmk-upd-first')||'null');if(!o)localStorage.setItem('pmk-upd-first',JSON.stringify({v,t:Date.now()}));else if(o.v!==v)localStorage.setItem('pmk-upd-first',JSON.stringify({v,t:o.t}))}catch(e){}}
+function clearStale(){try{localStorage.removeItem('pmk-upd-first')}catch(e){}}
+function staleDue(){
+if(!upd)return false;
+if(staleForce)return true;
+if(upd.test||!native)return false;
+try{const o=JSON.parse(localStorage.getItem('pmk-upd-first')||'null');return !!(o&&Date.now()-o.t>=STALE_MS)}catch(e){return false}
+}
+function paintStale(){   // экран «версия устарела»: закрыть нельзя, только обновить
+let el=$('stale');
+if(!staleDue()){if(el)el.remove();return}
+if(!el){
+el=document.createElement('div');el.id='stale';el.setAttribute('role','alertdialog');el.setAttribute('aria-modal','true');
+el.onclick=e=>{const a=e.target.closest('[data-s]')?.dataset.s;if(!a||!upd)return;
+if(a==='go')installUpd();
+if(a==='web')openUrl(upd.url);
+if(a==='x'&&upd.test)endUpdTest()};
+document.body.appendChild(el);
+}
+const s=updUI.st,busy=s==='dl'||s==='inst';
+const lbl=s==='dl'?'Загрузка '+updUI.pct+'%':s==='inst'?'Установка…':s==='err'?'Повторить':'Обновить';
+el.innerHTML=`<div class="stl-c"><div class="stl-i">!</div><h2>${upd.test?'Тест · ':''}Версия устарела</h2><p>У вас версия ${esc(APP_VERSION)}, а уже вышла ${esc(upd.version)}. Обновите приложение — без этого пользоваться расписанием дальше нельзя.</p>${upd.text?`<p>${esc(upd.text)}</p>`:''}<button class="stl-b" data-s="go"${busy?' disabled':''}>${lbl}</button>${busy?`<div class="stl-bar"><i style="width:${s==='inst'?100:updUI.pct}%"></i></div>`:''}${updUI.msg?`<div class="stl-e">${esc(updUI.msg)}${s==='err'&&upd.apk&&!upd.sim&&!upd.test?'<button data-s="web">Скачать в браузере</button>':''}</div>`:''}${upd.test?'<button class="stl-x" data-s="x">Закрыть тест</button>':''}</div>`;
+}
 function showUpd(show){
 const b=$('updbox');if(!b)return;
-if(!(upd&&show)){b.innerHTML='';return}
+if(!(upd&&show)){b.innerHTML='';paintStale();return}
 const s=updUI.st,busy=s==='dl'||s==='inst';
 const lbl=s==='dl'?'Загрузка '+updUI.pct+'%':s==='inst'?'Установка…':s==='err'?'Повторить':'Обновить';
 b.innerHTML=`<div class="updb"><span class="ut"><b>${upd.test?'Тест · ':''}Вышла версия ${esc(upd.version)}</b>${upd.text?'<br>'+esc(upd.text):''}</span><span class="ua"><button data-u="open"${busy?' disabled':''}>${lbl}</button></span>${busy?`<div class="bar"><i style="width:${s==='inst'?100:updUI.pct}%"></i></div>`:''}${updUI.msg?`<div class="uerr">${esc(updUI.msg)}${s==='err'&&upd.apk&&!upd.sim&&!upd.test?'<button data-u="web">Скачать в браузере</button>':''}</div>`:''}</div>`;
+paintStale();
 }
 const setUpdUI=(st,pct,msg)=>{updUI={st,pct:pct||0,msg:msg||''};showUpd(true)};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const AU=native?(CAP?.Plugins?.ApkUpdate||(()=>{try{return CAP&&CAP.registerPlugin?CAP.registerPlugin('ApkUpdate'):null}catch(e){return null}})()):null;   // как LocalNotifications и BackgroundRunner: сначала Capacitor.Plugins
 const NOINST='В этой сборке нет встроенного установщика. Поставьте свежий APK вручную один раз — дальше обновления пойдут внутри приложения.';
 let updBusy=false;
-function endUpdTest(){if(upd&&upd.test){upd=updSaved;updSaved=null}setUpdUI('idle')}   // тест закончен — возвращаем настоящее обновление, если оно было
+function endUpdTest(){staleForce=false;if(upd&&upd.test){upd=updSaved;updSaved=null}setUpdUI('idle')}   // тест закончен — возвращаем настоящее обновление, если оно было
 async function installUpd(){   // скачать APK внутри приложения и открыть установщик Android — браузер не открывается
 if(!upd||updBusy)return;
 const u=upd;
@@ -760,6 +814,14 @@ updUI={st:'idle',pct:0,msg:''};
 $('dev').classList.remove('show');showUpd(true);
 toast('Тестовое обновление','Нажмите «Обновить» на баннере сверху');
 }
+function devTestStale(kind){   // тест экрана «версия устарела» (kind: 'ok' или 'fail')
+if(updBusy){toast('Обновление уже идёт','');return}
+const p=APP_VERSION.split('.').map(Number);p[p.length-1]=(p[p.length-1]||0)+1;
+if(!upd||!upd.test)updSaved=upd;
+upd={version:p.join('.'),text:'Тест экрана «версия устарела»',url:'',apk:true,test:true,sim:kind==='fail'?'fail':'ok'};
+updUI={st:'idle',pct:0,msg:''};staleForce=true;
+$('dev').classList.remove('show');showUpd(true);
+}
 async function devTestDownload(){   // настоящая загрузка последнего APK, но без запуска установщика
 if(!native){toast('Только в Android-приложении','В браузере встроенной загрузки нет');return}
 if(!AU){toast('Установщика нет в этой сборке','Поставьте свежий APK вручную');return}
@@ -795,6 +857,26 @@ for(let i=1;i<=24;i++)list.push({id:50000+i,title:`Вышла версия ${upd
 await LN.schedule({notifications:list});
 }catch(e){}
 }
+const OTA_URL='https://raw.githubusercontent.com/slavamazein6111-max/pmk-apk/main/index.html';
+let otaMsg='',otaNew=0,otaBusy=false;
+try{const o=JSON.parse(localStorage.getItem('pmk-ota')||'null');if(o&&o.rev>window.HTML_REV)otaNew=o.rev}catch(e){}
+setTimeout(()=>{try{localStorage.setItem('pmk-ota-try','0')}catch(e){}},6000);   // запуск удался — сбрасываем счётчик аварийного отката
+async function checkHtml(manual){
+if(otaBusy)return;otaBusy=true;
+try{
+if(manual)otaMsg='Проверяю…';
+const ac=new AbortController(),tm=setTimeout(()=>ac.abort(),20000);
+let t;try{const r=await fetch(OTA_URL+'?t='+Date.now(),{cache:'no-store',signal:ac.signal});if(!r.ok)throw new Error('HTTP '+r.status);t=await r.text()}finally{clearTimeout(tm)}
+const m=t.match(/window\.HTML_REV=(\d+)/),K='const APP_VERSION';
+if(!m||t.length<100000||t.indexOf(K+"='")<0||!/<\/html>\s*$/.test(t))throw new Error('файл на сервере выглядит неполным');
+const rev=+m[1];
+if(rev>Math.max(window.HTML_REV,otaNew)){
+localStorage.setItem('pmk-ota',JSON.stringify({rev,html:t}));otaNew=rev;otaMsg=`Загружен интерфейс r${rev} — применится при перезапуске`;
+toast('Интерфейс обновлён',`r${rev} — закройте и откройте приложение`);
+}else otaMsg=otaNew>window.HTML_REV?`Интерфейс r${otaNew} загружен — перезапустите приложение`:'Установлена последняя версия интерфейса ✓';
+}catch(e){otaMsg=manual?'Не удалось проверить: '+e.message:''}
+finally{otaBusy=false;try{if($('set').classList.contains('show'))renderSet()}catch(e){}}
+}
 let updP=null;
 function checkUpdate(manual){if(!updP)updP=checkUpdate0(manual).finally(()=>{updP=null});return updP}   // одна проверка за раз
 async function checkUpdate0(manual){
@@ -808,11 +890,11 @@ updLast=`на сервере ${j&&j.version}`;
 if(j&&j.version&&vcmp(j.version,APP_VERSION)>0){
 const first=!upd||upd.version!==String(j.version);
 upd={version:String(j.version),text:j.text||'',url:j.url||TG_URL,apk:/\.apk(\?|$)/i.test(j.url||'')};
-updOk=false;showUpd(true);
+markStale(upd.version);updOk=false;showUpd(true);
 if(!native||first)fire(`Вышла версия ${upd.version}`,`${upd.text||'Подробности в Telegram-канале'} · у вас ${APP_VERSION}`,'upd',{url:upd.url});
 planUpd(first);
 }else{
-upd=null;updOk=!!(j&&j.version);showUpd(false);planUpd();
+upd=null;clearStale();updOk=!!(j&&j.version);showUpd(false);planUpd();
 }
 }catch(e){updLast='ошибка: '+e.message}
 }
@@ -893,8 +975,9 @@ h+=`<div class="srow" style="display:block"><b>Обои</b><div class="walls">${
 if(native)h+=row('Виджеты','Цвета — как у обоев. Добавить: долгое нажатие на рабочем столе → Виджеты → «Расписание ПМК» (5 видов). Прозрачность:',`<div class="seg" style="width:158px">${[[100,'0%'],[85,'15%'],[65,'35%']].map(([v,t])=>`<button data-wo="${v}" class="${set.wo===v?'on':''}">${t}</button>`).join('')}</div>`);
 h+=row('Офлайн-режим',`<span id="syncInfo">${esc(sync.run?`Загрузка: ${sync.done} из ${sync.total}`:(sync.msg||cacheInfo()))}</span>`,`<button class="lnk" id="syncBtn" data-a="sync">${sync.run?'…':'Загрузить'}</button>`);
 h+=`<div class="bar" id="syncBarWrap" style="margin:-6px 0 8px;display:${sync.run?'block':'none'}"><i id="syncBar" style="width:${sync.total?Math.round(sync.done/sync.total*100):0}%"></i></div>`;
+h+=row('Интерфейс (без переустановки)',esc(otaMsg||'Обновляется отдельно от APK, без новой сборки'),otaNew>window.HTML_REV?`<button class="lnk" data-a="otareload">Применить</button>`:`<button class="lnk" data-a="otachk">Проверить</button>`);
 h+=row('Обновлять при запуске','Докачивать расписание, когда есть интернет',sw('auto'));
-h+=row('Версия '+APP_VERSION+' <span class="beta" style="margin-left:4px">beta</span>',upd?`Доступна версия ${esc(upd.version)} — кнопка «Обновить» на главном экране`:updOk?'Установлена последняя версия ✓':'Обновления ставятся прямо из приложения',`<button class="lnk" data-a="tg">Telegram</button>`);
+h+=row('Версия '+APP_VERSION+' <span class="beta" style="margin-left:4px">beta</span>'+` <small style="display:inline;opacity:.6">· интерфейс r${window.HTML_REV}</small>`,upd?`Доступна версия ${esc(upd.version)} — кнопка «Обновить» на главном экране`:updOk?'Установлена последняя версия ✓':'Обновления ставятся прямо из приложения',`<button class="lnk" data-a="tg">Telegram</button>`);
 $('setsheet').innerHTML=h+'</div>';
 }
 $('bell').onclick=()=>{bellSnd();if(!sync.run)sync.msg='';renderSet();$('set').classList.add('show')};
@@ -910,6 +993,8 @@ const pw=e.target.closest('[data-pw]');
 if(pw){set.predW=+pw.dataset.pw;saveSet();renderSet();return}
 const a=e.target.closest('[data-a]')?.dataset.a;
 if(a==='sync'){syncAll(true);return}
+if(a==='otachk'){checkHtml(true).then(renderSet);renderSet();return}
+if(a==='otareload'){location.reload();return}
 if(a==='close')$('set').classList.remove('show');
 if(a==='tg')openUrl(TG_URL);
 if(a==='main')openSheet('group',id=>{set.main=id;set.mainName=(entities('group').find(([k])=>k===id)||[])[1]||id;saveSet();renderSet();render()},set.main);
@@ -1019,6 +1104,7 @@ h+=line('выбрано',`${st.mode}: ${st.ent[st.mode]||'—'} · заняти�
 h+=line('сущности',`групп ${entities('group').length} · преп. ${entities('teacher').length} · ауд. ${entities('aud').length}`);
 h+=line('дизайн','полный · без лайт-режимов');
 h+=line('установщик',AU?'есть (ApkUpdate)':native?'НЕТ — плагин не найден':'только в Android')
+h+=line('экран «устарела»',(()=>{try{const o=JSON.parse(localStorage.getItem('pmk-upd-first')||'null');if(!upd||!o||upd.test)return 'новой версии нет';const l=o.t+STALE_MS-Date.now();return l>0?'появится через '+(l/3600000).toFixed(1)+' ч':'показан'}catch(e){return '—'}})());
 h+=line('частота экрана',window.__hz?`${window.__hz} Гц (замер ${window.__hzRaw||'?'} Гц)`:'измеряется…');
 h+=line('производительность',`render ${devPerf.toFixed(1)} мс · DOM ${document.getElementsByTagName('*').length} узлов · журнал ${devLog.length}`);
 h+=line('кэш',`${days.size} дн. · формат даты: ${goodPat>=0?goodPat:'?'} · dateOk=${dateOk} · fail=${dateFail} · netOff=${netOff}`);
@@ -1032,7 +1118,9 @@ h+=`<div class="dh">Сеть</div><div class="dgrid">${btn('api','Провери
 <div class="srow" style="display:block;border:0;padding-bottom:0"><small>Ссылка на version.json (проверка новой версии) · ${esc(updLast||'не проверялось')}${upd?' · найдена '+esc(upd.version):''}</small><input class="tm dtm" id="devUpdUrl" value="${esc(updUrl)}" placeholder="https://…/version.json" style="margin-top:8px"><div class="dgrid">${btn('updchk','Сохранить и проверить')}</div>
 <small style="display:block;margin-top:12px">Тест обновления — на главном экране появится баннер «Обновить»</small>
 <div class="dgrid" style="padding-top:6px">${btn('utest','Симуляция обновления')}${btn('utestf','Симуляция с ошибкой',1)}</div>
-<div class="dgrid" style="padding-top:0">${btn('udl','Скачать APK без установки',1)}${btn('unotif','Уведомление «Обновить»',1)}</div></div>
+<div class="dgrid" style="padding-top:0">${btn('udl','Скачать APK без установки',1)}${btn('unotif','Уведомление «Обновить»',1)}</div>
+<small style="display:block;margin-top:12px">Экран «версия устарела» — появляется через сутки без обновления; здесь можно посмотреть его сразу</small>
+<div class="dgrid" style="padding-top:6px">${btn('ustale','Показать экран')}${btn('ustalef','С ошибкой загрузки',1)}</div></div>
 <div class="srow" style="display:block;border:0;padding-bottom:0"><small>Адрес API — после применения страница перезагрузится</small><input class="tm dtm" id="devApiUrl" value="${esc(API)}" style="margin-top:8px"><div class="dgrid">${btn('apiset','Применить')}${btn('apireset','По умолчанию',1)}</div></div>`;
 if(devApi)h+=`<div class="dv pre">${esc(devApi)}</div>`;
 h+=`<div class="dh">Диагностика</div><div class="dgrid">${btn('ddiag','Запустить')}${btn('ddiagcopy','Копировать',1)}</div>`;
@@ -1108,6 +1196,8 @@ try{localStorage.setItem('pmk-dev',JSON.stringify({api:v}))}catch(err){}toast('�
 if(a==='updchk'){const v=$('devUpdUrl').value.trim();updUrl=v||UPDATE_URL;try{v?localStorage.setItem('pmk-upd-url',v):localStorage.removeItem('pmk-upd-url')}catch(err){}await checkUpdate(true);renderDev();toast('Проверка версии',updLast)}
 if(a==='utest')devTestUpd('ok');
 if(a==='utestf')devTestUpd('fail');
+if(a==='ustale')devTestStale('ok');
+if(a==='ustalef')devTestStale('fail');
 if(a==='udl')devTestDownload();
 if(a==='unotif')devTestUpdNotif();
 if(a==='apireset'){try{localStorage.removeItem('pmk-dev')}catch(err){}toast('Адрес API сброшен','Перезагрузка…');setTimeout(()=>location.reload(),600)}
@@ -1225,11 +1315,12 @@ ensureEnt();render();
 }
 setInterval(async()=>{if(document.hidden&&!(set.on&&set.chg&&set.main))return;try{await loadBase();render()}catch(e){render()}},300000);
 setInterval(()=>{if(!document.hidden)render()},60000);
-checkUpdate();setInterval(()=>{if(!document.hidden)checkUpdate()},900000);
+checkUpdate();checkHtml();setInterval(()=>{if(!document.hidden)checkUpdate()},900000);
+setInterval(paintStale,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)paintStale()});
 document.addEventListener('visibilitychange',async()=>{if(document.hidden){persistNow();return}if(Date.now()-(window.__lb||0)>300000){try{await loadBase()}catch(e){}}render();try{planSoon()}catch(e){}});
 addEventListener('pagehide',()=>{try{persistNow()}catch(e){}});
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkUpdate()});
-addEventListener('online',()=>checkUpdate());
+addEventListener('online',()=>{checkUpdate();checkHtml()});
 })();
 (function(){
 (function(){
