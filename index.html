@@ -626,7 +626,7 @@ ensureEnt();render();syncUI();
 }
 addEventListener('online',async()=>{try{const b=await loadBase();ensureEnt();render();if(set.auto)syncAll(false,b)}catch(e){render()}});
 addEventListener('offline',()=>{netOff=true;render()});
-const UPDATE_URL='https://raw.githubusercontent.com/slavamazein6111-max/update/main/version.json';
+const UPDATE_URL='https://github.com/slavamazein6111-max/pmk-apk/releases/latest/download/version.json';
 const openUrl=u=>{try{const B=window.Capacitor?.Plugins?.Browser;if(native&&B&&B.open)return B.open({url:u})}catch(e){}window.open(u,'_blank')};
 let updUrl=UPDATE_URL,upd=null,updLast='',updOk=false,updAt=0;
 try{const u=localStorage.getItem('pmk-upd-url');if(u)updUrl=u}catch(e){}
@@ -634,11 +634,28 @@ const vcmp=(a,b)=>{const x=String(a).split('.').map(Number),y=String(b).split('.
 for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0};
 function showUpd(show){
 const b=$('updbox');if(!b)return;
-b.innerHTML=upd&&show?`<div class="updb"><span><b>Вышла версия ${esc(upd.version)}</b>${upd.text?'<br>'+esc(upd.text):''}</span><span class="ua"><button data-u="open">Открыть</button></span></div>`:'';
+b.innerHTML=upd&&show?`<div class="updb"><span><b>Вышла версия ${esc(upd.version)}</b>${upd.text?'<br>'+esc(upd.text):''}</span><span class="ua"><button data-u="open">Обновить</button></span></div>`:'';
+}
+const AU=(()=>{try{return native&&CAP&&CAP.registerPlugin?CAP.registerPlugin('ApkUpdate'):null}catch(e){return null}})();
+let updBusy=false;
+async function installUpd(){   // скачать APK внутри приложения и открыть установщик Android
+if(!upd)return;
+if(!AU||!upd.apk){openUrl(upd.url);return}
+if(updBusy)return;updBusy=true;
+const lbl=t=>{const b=$('updbox').querySelector('button');if(b)b.textContent=t};
+let h=null;try{h=await AU.addListener('progress',e=>lbl('Загрузка '+e.percent+'%'))}catch(e){}
+try{
+lbl('Загрузка 0%');
+await AU.download({url:upd.url});
+const r=await AU.install();
+if(r&&r.needPermission)toast('Разрешите установку','Включите «Установка неизвестных приложений» для Расписания ПМК, вернитесь и нажмите «Обновить» ещё раз');
+}catch(e){toast('Не удалось обновить внутри приложения','Открываю загрузку в браузере');openUrl(upd.url)}
+try{h&&h.remove()}catch(e){}
+lbl('Обновить');updBusy=false;
 }
 $('updbox').onclick=e=>{
 const a=e.target.closest('[data-u]')?.dataset.u;if(!a||!upd)return;
-if(a==='open')openUrl(upd.url);
+if(a==='open')installUpd();
 if(a==='x'){try{localStorage.setItem('pmk-upd-seen',upd.version)}catch(err){}showUpd(false)}
 };
 /* Пока версия на сервере новее APP_VERSION — баннер висит, а напоминания приходят каждые 5 минут.
@@ -661,11 +678,11 @@ if(!updUrl){updLast='ссылка не задана';return}
 if(!manual&&Date.now()-updAt<840000)return;
 updAt=Date.now();
 try{
-const j=await getJSON(updUrl+(updUrl.includes('?')?'&':'?')+'t='+Date.now());
+const j=await getJSON(/github\.com\//.test(updUrl)?updUrl:updUrl+(updUrl.includes('?')?'&':'?')+'t='+Date.now());
 updLast=`на сервере ${j&&j.version}`;
 if(j&&j.version&&vcmp(j.version,APP_VERSION)>0){
 const first=!upd||upd.version!==String(j.version);
-upd={version:String(j.version),text:j.text||'',url:j.url||TG_URL};
+upd={version:String(j.version),text:j.text||'',url:j.url||TG_URL,apk:/\.apk(\?|$)/i.test(j.url||'')};
 updOk=false;showUpd(true);
 if(!native||first)fire(`Вышла версия ${upd.version}`,`${upd.text||'Подробности в Telegram-канале'} · у вас ${APP_VERSION}`,'upd',{url:upd.url});
 planUpd(first);
@@ -755,7 +772,7 @@ h+=`<div class="srow" style="display:block"><b>Обои</b><div class="walls">${
 h+=row('Офлайн-режим',`<span id="syncInfo">${esc(sync.run?`Загрузка: ${sync.done} из ${sync.total}`:(sync.msg||cacheInfo()))}</span>`,`<button class="lnk" id="syncBtn" data-a="sync">${sync.run?'…':'Загрузить'}</button>`);
 h+=`<div class="bar" id="syncBarWrap" style="margin:-6px 0 8px;display:${sync.run?'block':'none'}"><i id="syncBar" style="width:${sync.total?Math.round(sync.done/sync.total*100):0}%"></i></div>`;
 h+=row('Обновлять при запуске','Докачивать расписание, когда есть интернет',sw('auto'));
-h+=row('Версия '+APP_VERSION+' <span class="beta" style="margin-left:4px">beta</span>',upd?`Доступна версия ${esc(upd.version)}`:updOk?'Установлена последняя версия ✓':'Новые версии выходят в Telegram-канале',`<button class="lnk" data-a="upd">Обновить</button>`);
+h+=row('Версия '+APP_VERSION+' <span class="beta" style="margin-left:4px">beta</span>',upd?`Доступна версия ${esc(upd.version)}`:updOk?'Установлена последняя версия ✓':'Обновления ставятся прямо из приложения',`<button class="lnk" data-a="upd">Обновить</button>`);
 $('setsheet').innerHTML=h+'</div>';
 }
 $('bell').onclick=()=>{bellSnd();if(!sync.run)sync.msg='';renderSet();$('set').classList.add('show')};
@@ -770,7 +787,7 @@ if(pw){set.predW=+pw.dataset.pw;saveSet();renderSet();return}
 const a=e.target.closest('[data-a]')?.dataset.a;
 if(a==='sync'){syncAll(true);return}
 if(a==='close')$('set').classList.remove('show');
-if(a==='upd')openUrl(upd?upd.url:TG_URL);
+if(a==='upd'){if(upd)installUpd();else openUrl(TG_URL)}
 if(a==='main')openSheet('group',id=>{set.main=id;set.mainName=(entities('group').find(([k])=>k===id)||[])[1]||id;saveSet();renderSet();render()},set.main);
 if(a==='test'){if(!(await enableNotif())){renderSet();return}fire('Тестовое уведомление','Напоминания работают',`test|${Date.now()}`)}
 if(a==='exact'){try{await LN.changeExactNotificationSetting()}catch(err){toast('Откройте вручную','Настройки → Приложения → Расписание ПМК → Будильники и напоминания')}}
