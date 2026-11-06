@@ -545,7 +545,7 @@ for(const n of out){let id=1000000+fnv(n.key)%900000;while(used.has(id))id++;use
 return out.slice(0,300);
 }
 let planT=0;
-function planSoon(){if(!native)return;clearTimeout(planT);planT=setTimeout(()=>{plan();syncRunner()},600)}
+function planSoon(){if(!native)return;clearTimeout(planT);planT=setTimeout(()=>{plan();syncRunner();syncWidget()},600)}
 let planBusy=false,planAgain=false;
 async function plan(){
 if(planBusy){planAgain=true;return}
@@ -581,6 +581,18 @@ if(!native||!BR)return;
 try{
 const o={};[...days.keys()].filter(k=>!days.get(k).demo).sort().slice(-21).forEach(k=>{o[k]={l:days.get(k).lessons.filter(l=>l.g===set.main),gm:days.get(k).gmsg[set.main]||''}});
 BR.dispatchEvent({label:RUNNER,event:'saveState',details:{v:2,api:API,dp:goodPat,set:{on:!!(set.on&&permOK),main:set.main,mainName:set.mainName,lead:set.lead,eve:set.eve,eveT:set.eveT,morn:set.morn,mornT:set.mornT,chg:set.chg,pred:set.pred},days:o}}).catch(()=>{});
+}catch(e){}
+}
+const PW=native?(CAP?.Plugins?.PmkWidget||(()=>{try{return CAP&&CAP.registerPlugin?CAP.registerPlugin('PmkWidget'):null}catch(e){return null}})()):null;   // виджеты на главном экране Android
+let _wSig='';
+function syncWidget(){
+if(!PW)return;
+try{
+const o={};
+if(set.main)[...days.keys()].filter(k=>!days.get(k).demo).sort().slice(-21).forEach(k=>{const l=days.get(k).lessons.filter(x=>x.g===set.main);if(l.length)o[k]=l.map(x=>({s:x.s,n:x.n,d:x.d,a:x.a,t:x.t,k:x.k}))});
+const j=JSON.stringify({name:set.main?(set.mainName||set.main):'',days:o});
+if(j===_wSig)return;_wSig=j;
+PW.save({json:j}).catch(()=>{});
 }catch(e){}
 }
 setInterval(tick,20000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)tick()});
