@@ -21,7 +21,8 @@ jobs:
         run: |
           LAST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' || true)
           N=$(printf '%s' "$LAST" | sed -nE 's/^v0\.5\.([0-9]+)$/\1/p')
-          echo "VERSION_NAME=0.5.$(( ${N:-0} + 1 ))" >> "$GITHUB_ENV"
+          if [ -n "$N" ]; then NEXT=$(( N + 1 )); else NEXT=0; fi
+          echo "VERSION_NAME=0.5.$NEXT" >> "$GITHUB_ENV"
           echo "последний релиз: ${LAST:-нет}"
       - uses: actions/setup-node@v4
         with:
