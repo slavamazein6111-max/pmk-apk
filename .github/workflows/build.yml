@@ -208,6 +208,13 @@ jobs:
           import android.content.ComponentName;
           import android.content.Context;
           import android.content.Intent;
+          import android.content.res.Configuration;
+          import android.graphics.Bitmap;
+          import android.graphics.Canvas;
+          import android.graphics.Color;
+          import android.graphics.Paint;
+          import android.graphics.RectF;
+          import android.os.Bundle;
           import android.view.View;
           import android.widget.RemoteViews;
           import java.text.SimpleDateFormat;
@@ -226,10 +233,16 @@ jobs:
               static final String PREFS = "pmk_widget";
               static final String TICK = "com.pmk.schedule.WIDGET_TICK";
               static final Pattern RNG = Pattern.compile("(\\d+):(\\d+)\\s*[-–]\\s*(\\d+):(\\d+)");
-              static final int ACCENT = 0xFFFF5A5F, WHITE = 0xFFFFFFFF, MUTED = 0x99FFFFFF, DIM = 0x55FFFFFF;
               static final Locale RU = new Locale("ru");
 
               static class L { int a, b, n; boolean k; String d, room, t; }
+              static class T { int bg, sf, tx, mu, di, ac, onAc, alpha; }
+              static class Pick { L l; int off; boolean cur; Calendar day; }
+
+              // 0 строка, 1 следующая пара, 2 сегодня, 3 завтра, 4 неделя
+              static Class<?>[] kinds() {
+                  return new Class<?>[] { CompactWidget.class, NextWidget.class, TodayWidget.class, TomorrowWidget.class, WeekWidget.class };
+              }
 
               static void save(Context c, String json) {
                   c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("data", json).apply();
@@ -243,17 +256,74 @@ jobs:
                   }
               }
 
+              // ---------- цвета ----------
+              static int col(JSONObject t, String k, int def) {
+                  try {
+                      if (t != null) {
+                          String s = t.optString(k, "");
+                          if (s.length() > 0) return Color.parseColor(s) | 0xFF000000;
+                      }
+                  } catch (Exception e) { }
+                  return def;
+              }
+
+              static int mix(int a, int b, float t) {
+                  int r = (int) (Color.red(a) * t + Color.red(b) * (1 - t));
+                  int g = (int) (Color.green(a) * t + Color.green(b) * (1 - t));
+                  int bl = (int) (Color.blue(a) * t + Color.blue(b) * (1 - t));
+                  return Color.rgb(r, g, bl);
+              }
+
+              static double lum(int c) {
+                  return 0.299 * Color.red(c) + 0.587 * Color.green(c) + 0.114 * Color.blue(c);
+              }
+
+              static T theme(JSONObject d) {
+                  JSONObject t = d.optJSONObject("th");
+                  T r = new T();
+                  r.bg = col(t, "bg", 0xFF0B0405);
+                  r.sf = col(t, "sf", 0xFF1C0B0E);
+                  r.tx = col(t, "tx", 0xFFFFFFFF);
+                  r.ac = col(t, "ac", 0xFFFF5A5F);
+                  r.mu = mix(r.tx, r.bg, 0.62f);
+                  r.di = mix(r.tx, r.bg, 0.34f);
+                  r.onAc = lum(r.ac) > 150 ? 0xFF111111 : 0xFFFFFFFF;
+                  int o = d.optInt("wo", 85);
+                  if (o < 35) o = 35;
+                  if (o > 100) o = 100;
+                  r.alpha = o * 255 / 100;
+                  return r;
+              }
+
+              // ---------- время ----------
               static String dateStr(Calendar cal) {
                   return String.format(Locale.US, "%04d-%02d-%02d", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH));
               }
 
               static String fmt(int m) {
-                  return (m / 60) + ":" + (m % 60 < 10 ? "0" : "") + (m % 60);
+                  return String.format(Locale.US, "%02d:%02d", m / 60, m % 60);
               }
 
               static String dur(int m) {
                   if (m < 60) return m + " мин";
                   return (m / 60) + " ч" + (m % 60 > 0 ? " " + (m % 60) + " мин" : "");
+              }
+
+              static String pairs(int n) {
+                  int a = n % 10, b = n % 100;
+                  String w = (b >= 11 && b <= 14) ? "пар" : a == 1 ? "пара" : (a >= 2 && a <= 4) ? "пары" : "пар";
+                  return n + " " + w;
+              }
+
+              static String cap(String s) {
+                  if (s == null || s.isEmpty()) return "";
+                  return s.substring(0, 1).toUpperCase(RU) + s.substring(1);
+              }
+
+              static Calendar plusDays(Calendar base, int n) {
+                  Calendar c = (Calendar) base.clone();
+                  c.add(Calendar.DAY_OF_MONTH, n);
+                  return c;
               }
 
               static List<L> day(JSONObject data, String date) {
@@ -283,70 +353,161 @@ jobs:
                   return out;
               }
 
-              static Calendar plusDays(Calendar base, int n) {
-                  Calendar c = (Calendar) base.clone();
-                  c.add(Calendar.DAY_OF_MONTH, n);
-                  return c;
+              static String title(L l) {
+                  return (l.k || l.n <= 0 ? "" : l.n + ". ") + l.d;
               }
 
-              static void bindNext(Context c, RemoteViews rv) {
-                  JSONObject data = load(c);
+              static String roomStr(L l) {
+                  return l.room.isEmpty() ? "" : l.room;
+              }
+
+              // ближайшая пара: идущая сейчас или следующая (в пределах недели)
+              static Pick pickNext(JSONObject data, Calendar now, int nm) {
+                  for (int off = 0; off <= 7; off++) {
+                      Calendar d = plusDays(now, off);
+                      for (L l : day(data, dateStr(d))) {
+                          Pick p = new Pick();
+                          p.l = l; p.off = off; p.day = d;
+                          if (off == 0) {
+                              if (l.a <= nm && nm < l.b) { p.cur = true; return p; }
+                              if (l.a > nm) return p;
+                          } else {
+                              return p;
+                          }
+                      }
+                  }
+                  return null;
+              }
+
+              static String labelFor(Pick p, int nm) {
+                  if (p.off == 0) {
+                      if (p.cur) return "СЕЙЧАС · ДО " + fmt(p.l.b);
+                      return "ДАЛЕЕ · ЧЕРЕЗ " + dur(p.l.a - nm).toUpperCase(RU);
+                  }
+                  if (p.off == 1) return "ЗАВТРА · " + fmt(p.l.a);
+                  return new SimpleDateFormat("EEE, d MMM", RU).format(p.day.getTime()).toUpperCase(RU);
+              }
+
+              // ---------- графика ----------
+              static Bitmap bar(int w, int h, float p, int track, int fill) {
+                  Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                  Canvas cv = new Canvas(b);
+                  Paint pt = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  float r = h / 2f;
+                  pt.setColor(track);
+                  cv.drawRoundRect(new RectF(0, 0, w, h), r, r, pt);
+                  pt.setColor(fill);
+                  float fw = Math.max(h, w * Math.max(0f, Math.min(1f, p)));
+                  cv.drawRoundRect(new RectF(0, 0, fw, h), r, r, pt);
+                  return b;
+              }
+
+              static void tint(RemoteViews rv, int id, int color) {
+                  rv.setInt(id, "setColorFilter", color | 0xFF000000);
+              }
+
+              // ---------- привязка данных ----------
+              static void bindCompact(Context c, RemoteViews rv, JSONObject data, T t) {
                   Calendar now = Calendar.getInstance();
                   int nm = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
                   String name = data.optString("name", "");
-                  String label, title, meta = "", sub = "";
+                  String label, ttl, time = "", room = "";
                   if (name.isEmpty()) {
                       label = "РАСПИСАНИЕ ПМК";
-                      title = "Выберите основную группу";
+                      ttl = "Выберите основную группу";
+                  } else {
+                      Pick p = pickNext(data, now, nm);
+                      if (p == null) {
+                          label = name.toUpperCase(RU);
+                          ttl = "Занятий нет";
+                      } else {
+                          label = labelFor(p, nm);
+                          ttl = title(p.l);
+                          time = fmt(p.l.a);
+                          room = roomStr(p.l);
+                      }
+                  }
+                  rv.setTextViewText(R.id.w_label, label);
+                  rv.setTextViewText(R.id.w_title, ttl);
+                  rv.setTextViewText(R.id.w_time, time);
+                  rv.setTextViewText(R.id.w_room, room);
+                  rv.setTextColor(R.id.w_label, t.ac);
+                  rv.setTextColor(R.id.w_title, t.tx);
+                  rv.setTextColor(R.id.w_time, t.tx);
+                  rv.setTextColor(R.id.w_room, t.mu);
+              }
+
+              static void bindNext(Context c, RemoteViews rv, JSONObject data, T t) {
+                  Calendar now = Calendar.getInstance();
+                  int nm = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
+                  String name = data.optString("name", "");
+                  String label, ttl, meta = "", sub = "", left = "";
+                  float prog = -1f;
+                  if (name.isEmpty()) {
+                      label = "РАСПИСАНИЕ ПМК";
+                      ttl = "Выберите основную группу";
                       meta = "Откройте приложение и нажмите ☆";
                   } else {
-                      label = name;
-                      title = "Занятий нет";
-                      meta = "Ближайшие дни не опубликованы";
-                      SimpleDateFormat df = new SimpleDateFormat("EEE, d MMM", RU);
-                      outer:
-                      for (int off = 0; off <= 7; off++) {
-                          Calendar d = plusDays(now, off);
-                          List<L> ls = day(data, dateStr(d));
-                          for (L l : ls) {
-                              String lab = null;
-                              if (off == 0) {
-                                  if (l.a <= nm && nm < l.b) lab = "СЕЙЧАС · до " + fmt(l.b);
-                                  else if (l.a > nm) lab = "ДАЛЕЕ · через " + dur(l.a - nm);
-                              } else if (off == 1) lab = "ЗАВТРА";
-                              else lab = df.format(d.getTime()).toUpperCase(RU);
-                              if (lab == null) continue;
-                              label = lab;
-                              title = (l.k || l.n <= 0 ? "" : l.n + ". ") + l.d;
-                              meta = fmt(l.a) + "–" + fmt(l.b) + (l.room.isEmpty() ? "" : " · " + l.room);
-                              sub = l.t;
-                              break outer;
+                      Pick p = pickNext(data, now, nm);
+                      if (p == null) {
+                          label = name.toUpperCase(RU);
+                          ttl = "Занятий нет";
+                          meta = "Ближайшие дни не опубликованы";
+                      } else {
+                          label = labelFor(p, nm);
+                          ttl = title(p.l);
+                          meta = fmt(p.l.a) + " – " + fmt(p.l.b) + (p.l.room.isEmpty() ? "" : " · " + p.l.room);
+                          sub = p.l.t;
+                          if (p.cur) {
+                              prog = (float) (nm - p.l.a) / (float) Math.max(1, p.l.b - p.l.a);
+                              left = "осталось " + dur(p.l.b - nm);
                           }
                       }
                   }
                   rv.setTextViewText(R.id.w_label, label);
-                  rv.setTextViewText(R.id.w_title, title);
+                  rv.setTextViewText(R.id.w_title, ttl);
                   rv.setTextViewText(R.id.w_meta, meta);
                   rv.setTextViewText(R.id.w_sub, sub);
+                  rv.setTextViewText(R.id.w_left, left);
+                  rv.setTextColor(R.id.w_label, t.ac);
+                  rv.setTextColor(R.id.w_title, t.tx);
+                  rv.setTextColor(R.id.w_meta, t.tx);
+                  rv.setTextColor(R.id.w_sub, t.mu);
+                  rv.setTextColor(R.id.w_left, t.mu);
                   rv.setViewVisibility(R.id.w_sub, sub.isEmpty() ? View.GONE : View.VISIBLE);
+                  if (prog >= 0f) {
+                      rv.setImageViewBitmap(R.id.w_bar, bar(360, 16, prog, mix(t.ac, t.bg, 0.22f), t.ac));
+                      rv.setViewVisibility(R.id.w_bar, View.VISIBLE);
+                      rv.setViewVisibility(R.id.w_left, View.VISIBLE);
+                  } else {
+                      rv.setViewVisibility(R.id.w_bar, View.GONE);
+                      rv.setViewVisibility(R.id.w_left, View.GONE);
+                  }
               }
 
-              static void bindToday(Context c, RemoteViews rv) {
-                  JSONObject data = load(c);
+              // mode 0: сегодня (если пары кончились — ближайший день), mode 1: следующий учебный день
+              static void bindList(Context c, RemoteViews rv, JSONObject data, T t, int mode, int hDp) {
                   Calendar now = Calendar.getInstance();
                   int nm = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
                   String name = data.optString("name", "");
                   rv.removeAllViews(R.id.rows);
+                  rv.setTextColor(R.id.w_day, t.tx);
+                  rv.setTextColor(R.id.w_date, t.mu);
+                  rv.setTextColor(R.id.w_group, t.ac);
+                  rv.setTextColor(R.id.w_empty, t.mu);
                   if (name.isEmpty()) {
-                      rv.setTextViewText(R.id.w_head, "Расписание ПМК");
-                      rv.setTextViewText(R.id.w_empty, "Выберите основную группу ☆ в приложении");
+                      rv.setTextViewText(R.id.w_day, "Расписание ПМК");
+                      rv.setTextViewText(R.id.w_date, "");
+                      rv.setTextViewText(R.id.w_group, "");
+                      rv.setTextViewText(R.id.w_empty, "Откройте приложение и нажмите ☆ у нужной группы");
                       rv.setViewVisibility(R.id.w_empty, View.VISIBLE);
                       return;
                   }
+                  rv.setTextViewText(R.id.w_group, name);
                   List<L> use = null;
                   Calendar when = now;
                   int useOff = 0;
-                  for (int off = 0; off <= 7; off++) {
+                  for (int off = mode == 1 ? 1 : 0; off <= 8; off++) {
                       Calendar d = plusDays(now, off);
                       List<L> ls = day(data, dateStr(d));
                       if (ls.isEmpty()) continue;
@@ -354,67 +515,163 @@ jobs:
                       use = ls; when = d; useOff = off;
                       break;
                   }
-                  SimpleDateFormat df = new SimpleDateFormat("EEEE, d MMMM", RU);
-                  String pre = useOff == 0 ? "" : useOff == 1 ? "Завтра · " : "";
-                  rv.setTextViewText(R.id.w_head, name + " · " + pre + df.format(when.getTime()));
                   if (use == null) {
-                      rv.setTextViewText(R.id.w_empty, "Занятий нет");
+                      rv.setTextViewText(R.id.w_day, mode == 1 ? "Завтра" : "Сегодня");
+                      rv.setTextViewText(R.id.w_date, "Ближайшие дни не опубликованы");
+                      rv.setTextViewText(R.id.w_empty, "Занятий нет — можно отдыхать");
                       rv.setViewVisibility(R.id.w_empty, View.VISIBLE);
                       return;
                   }
+                  String head = useOff == 0 ? "Сегодня" : useOff == 1 ? "Завтра" : cap(new SimpleDateFormat("EEEE", RU).format(when.getTime()));
+                  rv.setTextViewText(R.id.w_day, head);
+                  rv.setTextViewText(R.id.w_date, new SimpleDateFormat("d MMMM", RU).format(when.getTime()) + " · " + pairs(use.size()) + " · до " + fmt(use.get(use.size() - 1).b));
                   rv.setViewVisibility(R.id.w_empty, View.GONE);
-                  int max = 7;
-                  for (int i = 0; i < use.size() && i < max; i++) {
+                  int max = hDp <= 0 ? 5 : Math.max(2, Math.min(8, (hDp - 78) / 40));
+                  boolean more = use.size() > max;
+                  int shown = more ? max - 1 : use.size();
+                  for (int i = 0; i < shown; i++) {
                       L l = use.get(i);
-                      RemoteViews row = new RemoteViews(c.getPackageName(), R.layout.widget_row);
                       boolean cur = useOff == 0 && l.a <= nm && nm < l.b;
                       boolean past = useOff == 0 && l.b <= nm;
-                      if (i == max - 1 && use.size() > max) {
-                          row.setTextViewText(R.id.rt, "");
-                          row.setTextViewText(R.id.rd, "+" + (use.size() - max + 1) + " ещё");
-                          row.setTextViewText(R.id.ra, "");
-                          row.setTextColor(R.id.rd, MUTED);
+                      RemoteViews row = new RemoteViews(c.getPackageName(), R.layout.widget_row);
+                      row.setTextViewText(R.id.rt, fmt(l.a));
+                      row.setTextViewText(R.id.re, fmt(l.b));
+                      row.setTextViewText(R.id.rd, title(l));
+                      String sub = l.t;
+                      if (cur) sub = "до " + fmt(l.b) + (l.t.isEmpty() ? "" : " · " + l.t);
+                      row.setTextViewText(R.id.rs, sub);
+                      row.setViewVisibility(R.id.rs, sub.isEmpty() ? View.GONE : View.VISIBLE);
+                      row.setTextViewText(R.id.ra, roomStr(l));
+                      int cT = cur ? t.ac : past ? t.di : t.tx;
+                      int cM = cur ? t.tx : past ? t.di : t.mu;
+                      row.setTextColor(R.id.rt, cT);
+                      row.setTextColor(R.id.re, cur ? t.mu : t.di);
+                      row.setTextColor(R.id.rd, cur ? t.tx : past ? t.di : t.tx);
+                      row.setTextColor(R.id.rs, cM);
+                      row.setTextColor(R.id.ra, cur ? t.ac : past ? t.di : t.mu);
+                      tint(row, R.id.rbar, cur ? t.ac : past ? mix(t.tx, t.bg, 0.16f) : mix(t.ac, t.bg, 0.5f));
+                      if (cur) {
+                          tint(row, R.id.rbg, mix(t.ac, t.bg, 0.2f));
+                          row.setViewVisibility(R.id.rbg, View.VISIBLE);
                       } else {
-                          row.setTextViewText(R.id.rt, fmt(l.a));
-                          row.setTextViewText(R.id.rd, (l.k || l.n <= 0 ? "" : l.n + ". ") + l.d);
-                          row.setTextViewText(R.id.ra, l.room);
-                          row.setTextColor(R.id.rt, cur ? ACCENT : past ? DIM : MUTED);
-                          row.setTextColor(R.id.rd, cur ? ACCENT : past ? DIM : WHITE);
-                          row.setTextColor(R.id.ra, cur ? ACCENT : past ? DIM : MUTED);
+                          row.setViewVisibility(R.id.rbg, View.GONE);
                       }
                       rv.addView(R.id.rows, row);
-                      if (i == max - 1) break;
+                  }
+                  if (more) {
+                      RemoteViews row = new RemoteViews(c.getPackageName(), R.layout.widget_row);
+                      row.setTextViewText(R.id.rt, "");
+                      row.setTextViewText(R.id.re, "");
+                      row.setTextViewText(R.id.rd, "+ ещё " + (use.size() - shown));
+                      row.setTextViewText(R.id.rs, "");
+                      row.setViewVisibility(R.id.rs, View.GONE);
+                      row.setTextViewText(R.id.ra, "");
+                      row.setTextColor(R.id.rd, t.mu);
+                      row.setViewVisibility(R.id.rbg, View.GONE);
+                      row.setViewVisibility(R.id.rbar, View.INVISIBLE);
+                      rv.addView(R.id.rows, row);
                   }
               }
 
-              static void bindClick(Context c, RemoteViews rv) {
+              static void bindWeek(Context c, RemoteViews rv, JSONObject data, T t) {
+                  Calendar now = Calendar.getInstance();
+                  String name = data.optString("name", "");
+                  rv.removeAllViews(R.id.cols);
+                  rv.setTextColor(R.id.w_head, t.tx);
+                  rv.setTextColor(R.id.w_group, t.ac);
+                  rv.setTextViewText(R.id.w_group, name);
+                  int dow = now.get(Calendar.DAY_OF_WEEK);
+                  int todayIdx = dow == Calendar.SUNDAY ? -1 : dow - Calendar.MONDAY;
+                  Calendar mon = plusDays(now, dow == Calendar.SUNDAY ? 1 : -(dow - Calendar.MONDAY));
+                  SimpleDateFormat dm = new SimpleDateFormat("d MMM", RU);
+                  rv.setTextViewText(R.id.w_head, "Неделя · " + dm.format(mon.getTime()) + " – " + dm.format(plusDays(mon, 5).getTime()));
+                  SimpleDateFormat ee = new SimpleDateFormat("EE", RU);
+                  for (int i = 0; i < 6; i++) {
+                      Calendar d = plusDays(mon, i);
+                      List<L> ls = name.isEmpty() ? new ArrayList<L>() : day(data, dateStr(d));
+                      boolean today = i == todayIdx;
+                      boolean past = todayIdx >= 0 && i < todayIdx;
+                      RemoteViews col = new RemoteViews(c.getPackageName(), R.layout.widget_week_col);
+                      col.setTextViewText(R.id.wd, ee.format(d.getTime()).toUpperCase(RU));
+                      col.setTextViewText(R.id.wn, String.valueOf(d.get(Calendar.DAY_OF_MONTH)));
+                      col.setTextViewText(R.id.wp, ls.isEmpty() ? "—" : pairs(ls.size()));
+                      col.setTextViewText(R.id.wt, ls.isEmpty() ? "" : fmt(ls.get(0).a));
+                      col.setTextColor(R.id.wd, today ? t.ac : t.mu);
+                      col.setTextColor(R.id.wn, today ? t.onAc : past ? t.di : t.tx);
+                      col.setTextColor(R.id.wp, ls.isEmpty() || past ? t.di : t.tx);
+                      col.setTextColor(R.id.wt, past ? t.di : t.mu);
+                      if (today) {
+                          tint(col, R.id.wc, t.ac);
+                          col.setViewVisibility(R.id.wc, View.VISIBLE);
+                      } else {
+                          col.setViewVisibility(R.id.wc, View.INVISIBLE);
+                      }
+                      rv.addView(R.id.cols, col);
+                  }
+              }
+
+              // ---------- сборка ----------
+              static RemoteViews build(Context c, int kind, int hDp) {
+                  JSONObject data = load(c);
+                  T t = theme(data);
+                  int layout;
+                  switch (kind) {
+                      case 0: layout = R.layout.widget_compact; break;
+                      case 1: layout = R.layout.widget_next; break;
+                      case 4: layout = R.layout.widget_week; break;
+                      default: layout = R.layout.widget_today; break;
+                  }
+                  RemoteViews rv = new RemoteViews(c.getPackageName(), layout);
+                  rv.setInt(R.id.bg, "setColorFilter", t.bg | 0xFF000000);
+                  rv.setInt(R.id.bg, "setImageAlpha", t.alpha);
+                  switch (kind) {
+                      case 0: bindCompact(c, rv, data, t); break;
+                      case 1: bindNext(c, rv, data, t); break;
+                      case 2: bindList(c, rv, data, t, 0, hDp); break;
+                      case 3: bindList(c, rv, data, t, 1, hDp); break;
+                      default: bindWeek(c, rv, data, t); break;
+                  }
                   Intent li = c.getPackageManager().getLaunchIntentForPackage(c.getPackageName());
                   if (li != null) {
                       rv.setOnClickPendingIntent(R.id.root, PendingIntent.getActivity(c, 0, li, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT));
                   }
+                  return rv;
               }
 
-              static void refreshAll(Context c) {
-                  AppWidgetManager m = AppWidgetManager.getInstance(c);
-                  Class<?>[] ks = new Class<?>[] { NextWidget.class, TodayWidget.class };
-                  for (Class<?> k : ks) {
-                      int[] ids = m.getAppWidgetIds(new ComponentName(c, k));
-                      if (ids.length > 0) {
-                          Intent i = new Intent(c, k);
-                          i.setAction(AppWidgetManager.ACTION_APPWIDGET_UPDATE);
-                          i.putExtra(AppWidgetManager.EXTRA_APPWIDGET_IDS, ids);
-                          c.sendBroadcast(i);
-                      }
+              static void push(Context c, AppWidgetManager m, int id, int kind) {
+                  try {
+                      Bundle o = m.getAppWidgetOptions(id);
+                      boolean land = c.getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+                      int h = o == null ? 0 : o.getInt(land ? AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT : AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
+                      m.updateAppWidget(id, build(c, kind, h));
+                  } catch (Exception e) {
+                      try {
+                          RemoteViews rv = new RemoteViews(c.getPackageName(), R.layout.widget_compact);
+                          rv.setTextViewText(R.id.w_label, "РАСПИСАНИЕ ПМК");
+                          rv.setTextViewText(R.id.w_title, "Откройте приложение");
+                          m.updateAppWidget(id, rv);
+                      } catch (Exception e2) { }
                   }
               }
 
-              // следующий пересчёт — на ближайшей границе пары (начало/конец), но не реже раза в час
+              static void updateAll(Context c) {
+                  AppWidgetManager m = AppWidgetManager.getInstance(c);
+                  Class<?>[] ks = kinds();
+                  for (int k = 0; k < ks.length; k++) {
+                      int[] ids = m.getAppWidgetIds(new ComponentName(c, ks[k]));
+                      for (int id : ids) push(c, m, id, k);
+                  }
+              }
+
+              // следующий пересчёт: на ближайшей границе пары; во время пары — каждые 5 минут (полоса прогресса), иначе не реже раза в час
               static void planTick(Context c) {
                   try {
                       Calendar now = Calendar.getInstance();
                       int nm = now.get(Calendar.HOUR_OF_DAY) * 60 + now.get(Calendar.MINUTE);
                       int best = 24 * 60 + 1;
+                      boolean cur = false;
                       for (L l : day(load(c), dateStr(now))) {
+                          if (l.a <= nm && nm < l.b) cur = true;
                           if (l.a > nm && l.a < best) best = l.a;
                           if (l.b > nm && l.b < best) best = l.b;
                       }
@@ -424,9 +681,10 @@ jobs:
                       t.set(Calendar.SECOND, 0);
                       t.set(Calendar.MILLISECOND, 0);
                       t.add(Calendar.MINUTE, best);
-                      long at = Math.min(t.getTimeInMillis(), System.currentTimeMillis() + 3600000L);
+                      long cap = System.currentTimeMillis() + (cur ? 300000L : 3600000L);
+                      long at = Math.max(Math.min(t.getTimeInMillis(), cap), System.currentTimeMillis() + 30000L);
                       AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-                      Intent i = new Intent(c, TodayWidget.class);
+                      Intent i = new Intent(c, CompactWidget.class);
                       i.setAction(TICK);
                       PendingIntent pi = PendingIntent.getBroadcast(c, 77, i, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
                       am.setAndAllowWhileIdle(AlarmManager.RTC, at, pi);
@@ -434,62 +692,52 @@ jobs:
               }
           }
           EOF5
-          cat > "$D/NextWidget.java" <<'EOF6'
+          cat > "$D/ScheduleWidget.java" <<'EOF6'
           package __PKG__;
 
           import android.appwidget.AppWidgetManager;
           import android.appwidget.AppWidgetProvider;
           import android.content.Context;
           import android.content.Intent;
-          import android.widget.RemoteViews;
+          import android.os.Bundle;
 
-          public class NextWidget extends AppWidgetProvider {
+          public abstract class ScheduleWidget extends AppWidgetProvider {
+              abstract int kind();
+
               @Override
               public void onUpdate(Context c, AppWidgetManager m, int[] ids) {
-                  for (int id : ids) {
-                      RemoteViews rv = new RemoteViews(c.getPackageName(), R.layout.widget_next);
-                      WidgetData.bindNext(c, rv);
-                      WidgetData.bindClick(c, rv);
-                      m.updateAppWidget(id, rv);
-                  }
+                  for (int id : ids) WidgetData.push(c, m, id, kind());
                   WidgetData.planTick(c);
               }
 
               @Override
+              public void onAppWidgetOptionsChanged(Context c, AppWidgetManager m, int id, Bundle o) {
+                  WidgetData.push(c, m, id, kind());
+              }
+
+              @Override
               public void onReceive(Context c, Intent i) {
-                  if (WidgetData.TICK.equals(i.getAction())) { WidgetData.refreshAll(c); return; }
+                  String a = i == null ? null : i.getAction();
+                  if (WidgetData.TICK.equals(a) || Intent.ACTION_DATE_CHANGED.equals(a) || Intent.ACTION_TIME_CHANGED.equals(a) || Intent.ACTION_TIMEZONE_CHANGED.equals(a)) {
+                      WidgetData.updateAll(c);
+                      WidgetData.planTick(c);
+                      return;
+                  }
                   super.onReceive(c, i);
               }
           }
           EOF6
-          cat > "$D/TodayWidget.java" <<'EOF7'
+          for K in Compact:0 Next:1 Today:2 Tomorrow:3 Week:4; do
+          N="${K%%:*}"; V="${K##*:}"
+          cat > "$D/${N}Widget.java" <<EOF7
           package __PKG__;
 
-          import android.appwidget.AppWidgetManager;
-          import android.appwidget.AppWidgetProvider;
-          import android.content.Context;
-          import android.content.Intent;
-          import android.widget.RemoteViews;
-
-          public class TodayWidget extends AppWidgetProvider {
+          public class ${N}Widget extends ScheduleWidget {
               @Override
-              public void onUpdate(Context c, AppWidgetManager m, int[] ids) {
-                  for (int id : ids) {
-                      RemoteViews rv = new RemoteViews(c.getPackageName(), R.layout.widget_today);
-                      WidgetData.bindToday(c, rv);
-                      WidgetData.bindClick(c, rv);
-                      m.updateAppWidget(id, rv);
-                  }
-                  WidgetData.planTick(c);
-              }
-
-              @Override
-              public void onReceive(Context c, Intent i) {
-                  if (WidgetData.TICK.equals(i.getAction())) { WidgetData.refreshAll(c); return; }
-                  super.onReceive(c, i);
-              }
+              int kind() { return $V; }
           }
           EOF7
+          done
           cat > "$D/WidgetPlugin.java" <<'EOF8'
           package __PKG__;
 
@@ -505,99 +753,227 @@ jobs:
                   String json = call.getString("json");
                   if (json == null) { call.reject("no json"); return; }
                   WidgetData.save(getContext(), json);
-                  WidgetData.refreshAll(getContext());
+                  WidgetData.updateAll(getContext());
+                  WidgetData.planTick(getContext());
                   call.resolve();
               }
           }
           EOF8
-          sed -i "s/__PKG__/$APP_ID/" "$D/WidgetData.java" "$D/NextWidget.java" "$D/TodayWidget.java" "$D/WidgetPlugin.java"
+          sed -i "s/__PKG__/$APP_ID/" "$D"/WidgetData.java "$D"/ScheduleWidget.java "$D"/*Widget.java "$D"/WidgetPlugin.java
           cat > $R/drawable/widget_bg.xml <<'EOF9'
           <?xml version="1.0" encoding="utf-8"?>
           <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-              <solid android:color="#F012050A"/>
-              <corners android:radius="22dp"/>
+              <solid android:color="#FFFFFFFF"/>
+              <corners android:radius="26dp"/>
           </shape>
           EOF9
-          cat > $R/layout/widget_next.xml <<'EOF10'
+          cat > $R/drawable/widget_row_bg.xml <<'EOF9'
           <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#FFFFFFFF"/>
+              <corners android:radius="14dp"/>
+          </shape>
+          EOF9
+          cat > $R/drawable/widget_bar.xml <<'EOF9'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+              <solid android:color="#FFFFFFFF"/>
+              <corners android:radius="2dp"/>
+          </shape>
+          EOF9
+          cat > $R/drawable/widget_dot.xml <<'EOF9'
+          <?xml version="1.0" encoding="utf-8"?>
+          <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+              <solid android:color="#FFFFFFFF"/>
+          </shape>
+          EOF9
+          cat > $R/layout/widget_compact.xml <<'EOF10'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:id="@+id/root"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:orientation="vertical"
-              android:gravity="center_vertical"
-              android:padding="14dp"
-              android:background="@drawable/widget_bg">
-              <TextView android:id="@+id/w_label" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:textColor="#FFFF5A5F" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
-              <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:layout_marginTop="2dp" android:textColor="#FFFFFFFF" android:textSize="16sp" android:textStyle="bold" android:maxLines="2" android:ellipsize="end"/>
-              <TextView android:id="@+id/w_meta" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:layout_marginTop="2dp" android:textColor="#99FFFFFF" android:textSize="13sp" android:maxLines="1" android:ellipsize="end"/>
-              <TextView android:id="@+id/w_sub" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:textColor="#66FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end"/>
-          </LinearLayout>
+              android:layout_height="match_parent">
+              <ImageView android:id="@+id/bg" android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:scaleType="fitXY" android:src="@drawable/widget_bg" android:importantForAccessibility="no"/>
+              <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:orientation="horizontal" android:gravity="center_vertical"
+                  android:paddingLeft="16dp" android:paddingRight="16dp" android:paddingTop="8dp" android:paddingBottom="8dp">
+                  <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                      <TextView android:id="@+id/w_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:textColor="#FFFF5A5F" android:textSize="11sp" android:textStyle="bold" android:letterSpacing="0.05" android:maxLines="1" android:ellipsize="end"/>
+                      <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:layout_marginTop="1dp" android:textColor="#FFFFFFFF" android:textSize="15sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                  </LinearLayout>
+                  <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="12dp"
+                      android:orientation="vertical" android:gravity="end">
+                      <TextView android:id="@+id/w_time" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:textColor="#FFFFFFFF" android:textSize="18sp" android:textStyle="bold" android:maxLines="1"/>
+                      <TextView android:id="@+id/w_room" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:textColor="#99FFFFFF" android:textSize="12sp" android:maxLines="1"/>
+                  </LinearLayout>
+              </LinearLayout>
+          </FrameLayout>
+          EOF10
+          cat > $R/layout/widget_next.xml <<'EOF10'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+              <ImageView android:id="@+id/bg" android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:scaleType="fitXY" android:src="@drawable/widget_bg" android:importantForAccessibility="no"/>
+              <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:orientation="vertical" android:padding="16dp">
+                  <TextView android:id="@+id/w_label" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:textColor="#FFFF5A5F" android:textSize="11sp" android:textStyle="bold" android:letterSpacing="0.05" android:maxLines="1" android:ellipsize="end"/>
+                  <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:layout_marginTop="5dp" android:textColor="#FFFFFFFF" android:textSize="18sp" android:textStyle="bold" android:maxLines="3" android:ellipsize="end"/>
+                  <TextView android:id="@+id/w_meta" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:layout_marginTop="6dp" android:textColor="#FFFFFFFF" android:textSize="13sp" android:fontFamily="sans-serif-medium" android:maxLines="1" android:ellipsize="end"/>
+                  <TextView android:id="@+id/w_sub" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:layout_marginTop="2dp" android:textColor="#99FFFFFF" android:textSize="12sp" android:maxLines="2" android:ellipsize="end"/>
+                  <ImageView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:importantForAccessibility="no"/>
+                  <TextView android:id="@+id/w_left" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:layout_marginBottom="5dp" android:textColor="#99FFFFFF" android:textSize="11sp" android:maxLines="1"/>
+                  <ImageView android:id="@+id/w_bar" android:layout_width="match_parent" android:layout_height="6dp"
+                      android:scaleType="fitXY" android:importantForAccessibility="no"/>
+              </LinearLayout>
+          </FrameLayout>
           EOF10
           cat > $R/layout/widget_today.xml <<'EOF11'
           <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:id="@+id/root"
               android:layout_width="match_parent"
-              android:layout_height="match_parent"
-              android:orientation="vertical"
-              android:padding="14dp"
-              android:background="@drawable/widget_bg">
-              <TextView android:id="@+id/w_head" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:layout_marginBottom="6dp" android:textColor="#FFFF5A5F" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
-              <LinearLayout android:id="@+id/rows" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"/>
-              <TextView android:id="@+id/w_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
-                  android:visibility="gone" android:paddingTop="8dp" android:textColor="#99FFFFFF" android:textSize="14sp"/>
-          </LinearLayout>
+              android:layout_height="match_parent">
+              <ImageView android:id="@+id/bg" android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:scaleType="fitXY" android:src="@drawable/widget_bg" android:importantForAccessibility="no"/>
+              <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:orientation="vertical" android:paddingLeft="12dp" android:paddingRight="12dp" android:paddingTop="12dp" android:paddingBottom="8dp">
+                  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:orientation="horizontal" android:gravity="center_vertical" android:paddingLeft="4dp" android:paddingRight="4dp">
+                      <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                          <TextView android:id="@+id/w_day" android:layout_width="match_parent" android:layout_height="wrap_content"
+                              android:textColor="#FFFFFFFF" android:textSize="20sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                          <TextView android:id="@+id/w_date" android:layout_width="match_parent" android:layout_height="wrap_content"
+                              android:textColor="#99FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end"/>
+                      </LinearLayout>
+                      <TextView android:id="@+id/w_group" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:layout_marginStart="8dp" android:maxWidth="110dp"
+                          android:textColor="#FFFF5A5F" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                  </LinearLayout>
+                  <LinearLayout android:id="@+id/rows" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:layout_marginTop="8dp" android:orientation="vertical"/>
+                  <TextView android:id="@+id/w_empty" android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:visibility="gone" android:paddingLeft="4dp" android:paddingTop="10dp"
+                      android:textColor="#99FFFFFF" android:textSize="14sp"/>
+              </LinearLayout>
+          </FrameLayout>
           EOF11
           cat > $R/layout/widget_row.xml <<'EOF12'
           <?xml version="1.0" encoding="utf-8"?>
-          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
               android:layout_width="match_parent"
+              android:layout_height="wrap_content">
+              <ImageView android:id="@+id/rbg" android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:scaleType="fitXY" android:src="@drawable/widget_row_bg" android:importantForAccessibility="no"/>
+              <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                  android:orientation="horizontal" android:gravity="center_vertical"
+                  android:paddingLeft="8dp" android:paddingRight="10dp" android:paddingTop="4dp" android:paddingBottom="4dp">
+                  <LinearLayout android:layout_width="40dp" android:layout_height="wrap_content" android:orientation="vertical">
+                      <TextView android:id="@+id/rt" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:textColor="#FFFFFFFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1"/>
+                      <TextView android:id="@+id/re" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:textColor="#99FFFFFF" android:textSize="11sp" android:maxLines="1"/>
+                  </LinearLayout>
+                  <ImageView android:id="@+id/rbar" android:layout_width="3dp" android:layout_height="28dp"
+                      android:layout_marginLeft="6dp" android:layout_marginRight="10dp"
+                      android:scaleType="fitXY" android:src="@drawable/widget_bar" android:importantForAccessibility="no"/>
+                  <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical">
+                      <TextView android:id="@+id/rd" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:textColor="#FFFFFFFF" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                      <TextView android:id="@+id/rs" android:layout_width="match_parent" android:layout_height="wrap_content"
+                          android:textColor="#99FFFFFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end"/>
+                  </LinearLayout>
+                  <TextView android:id="@+id/ra" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                      android:layout_marginLeft="8dp" android:textColor="#99FFFFFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1"/>
+              </LinearLayout>
+          </FrameLayout>
+          EOF12
+          cat > $R/layout/widget_week.xml <<'EOF12'
+          <?xml version="1.0" encoding="utf-8"?>
+          <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:id="@+id/root"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent">
+              <ImageView android:id="@+id/bg" android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:scaleType="fitXY" android:src="@drawable/widget_bg" android:importantForAccessibility="no"/>
+              <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+                  android:orientation="vertical" android:paddingLeft="10dp" android:paddingRight="10dp" android:paddingTop="10dp" android:paddingBottom="8dp">
+                  <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                      android:orientation="horizontal" android:paddingLeft="6dp" android:paddingRight="6dp">
+                      <TextView android:id="@+id/w_head" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                          android:textColor="#FFFFFFFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                      <TextView android:id="@+id/w_group" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                          android:layout_marginStart="8dp" android:maxWidth="110dp"
+                          android:textColor="#FFFF5A5F" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
+                  </LinearLayout>
+                  <LinearLayout android:id="@+id/cols" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+                      android:layout_marginTop="4dp" android:orientation="horizontal" android:gravity="center_vertical"/>
+              </LinearLayout>
+          </FrameLayout>
+          EOF12
+          cat > $R/layout/widget_week_col.xml <<'EOF12'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="0dp"
               android:layout_height="wrap_content"
-              android:orientation="horizontal"
-              android:paddingTop="3dp"
-              android:paddingBottom="3dp">
-              <TextView android:id="@+id/rt" android:layout_width="44dp" android:layout_height="wrap_content"
-                  android:textColor="#99FFFFFF" android:textSize="12sp" android:maxLines="1"/>
-              <TextView android:id="@+id/rd" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
-                  android:textColor="#FFFFFFFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end"/>
-              <TextView android:id="@+id/ra" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                  android:layout_marginStart="6dp" android:textColor="#99FFFFFF" android:textSize="12sp" android:maxLines="1"/>
+              android:layout_weight="1"
+              android:orientation="vertical"
+              android:gravity="center_horizontal">
+              <TextView android:id="@+id/wd" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:textColor="#99FFFFFF" android:textSize="10sp" android:textStyle="bold" android:letterSpacing="0.05" android:maxLines="1"/>
+              <FrameLayout android:layout_width="28dp" android:layout_height="28dp" android:layout_marginTop="2dp">
+                  <ImageView android:id="@+id/wc" android:layout_width="match_parent" android:layout_height="match_parent"
+                      android:scaleType="fitXY" android:src="@drawable/widget_dot" android:importantForAccessibility="no"/>
+                  <TextView android:id="@+id/wn" android:layout_width="match_parent" android:layout_height="match_parent"
+                      android:gravity="center" android:textColor="#FFFFFFFF" android:textSize="14sp" android:textStyle="bold" android:maxLines="1"/>
+              </FrameLayout>
+              <TextView android:id="@+id/wp" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:layout_marginTop="5dp" android:textColor="#FFFFFFFF" android:textSize="11sp" android:textStyle="bold" android:maxLines="1"/>
+              <TextView android:id="@+id/wt" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                  android:textColor="#99FFFFFF" android:textSize="10sp" android:maxLines="1"/>
           </LinearLayout>
           EOF12
-          cat > $R/xml/widget_next_info.xml <<'EOF13'
+          mkinfo() { # имя minW minH cellW cellH resizeW resizeH resizeMode
+          cat > $R/xml/$1.xml <<EOF13
           <?xml version="1.0" encoding="utf-8"?>
           <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-              android:minWidth="110dp"
-              android:minHeight="40dp"
-              android:targetCellWidth="2"
-              android:targetCellHeight="1"
+              android:minWidth="$2dp"
+              android:minHeight="$3dp"
+              android:minResizeWidth="$6dp"
+              android:minResizeHeight="$7dp"
+              android:targetCellWidth="$4"
+              android:targetCellHeight="$5"
               android:updatePeriodMillis="1800000"
-              android:initialLayout="@layout/widget_next"
-              android:resizeMode="horizontal|vertical"
+              android:initialLayout="@layout/$9"
+              android:resizeMode="$8"
               android:widgetCategory="home_screen"/>
           EOF13
-          cat > $R/xml/widget_today_info.xml <<'EOF14'
-          <?xml version="1.0" encoding="utf-8"?>
-          <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-              android:minWidth="250dp"
-              android:minHeight="180dp"
-              android:targetCellWidth="4"
-              android:targetCellHeight="3"
-              android:updatePeriodMillis="1800000"
-              android:initialLayout="@layout/widget_today"
-              android:resizeMode="horizontal|vertical"
-              android:widgetCategory="home_screen"/>
-          EOF14
+          }
+          mkinfo widget_compact_info 250 40 4 1 110 40 "horizontal" widget_compact
+          mkinfo widget_next_info 110 110 2 2 110 110 "horizontal|vertical" widget_next
+          mkinfo widget_today_info 250 250 4 4 180 110 "horizontal|vertical" widget_today
+          mkinfo widget_tomorrow_info 250 250 4 4 180 110 "horizontal|vertical" widget_today
+          mkinfo widget_week_info 250 110 4 2 250 110 "horizontal" widget_week
           python3 - <<'PY'
           p='android/app/src/main/AndroidManifest.xml'
           s=open(p,encoding='utf-8').read()
-          r=''.join('<receiver android:name=".%s" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/%s"/></receiver>'%(c,x) for c,x in [('NextWidget','widget_next_info'),('TodayWidget','widget_today_info')])
+          items=[('CompactWidget','widget_compact_info','ПМК · Строка'),('NextWidget','widget_next_info','ПМК · Следующая пара'),('TodayWidget','widget_today_info','ПМК · Сегодня'),('TomorrowWidget','widget_tomorrow_info','ПМК · Завтра'),('WeekWidget','widget_week_info','ПМК · Неделя')]
+          r=''
+          for i,(c,x,lab) in enumerate(items):
+              extra='<action android:name="android.intent.action.DATE_CHANGED"/><action android:name="android.intent.action.TIME_SET"/><action android:name="android.intent.action.TIMEZONE_CHANGED"/>' if i==0 else ''
+              r+='<receiver android:name=".%s" android:label="%s" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>%s</intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/%s"/></receiver>'%(c,lab,extra,x)
           assert '</application>' in s
           s=s.replace('</application>',r+'</application>',1)
           open(p,'w',encoding='utf-8').write(s)
