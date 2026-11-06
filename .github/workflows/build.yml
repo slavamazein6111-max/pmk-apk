@@ -7,10 +7,12 @@ env:
   KS_ALIAS: pmk
   APP_ID: com.sched.app
   APP_NAME: "Расписание ПМК"
-  VERSION_NAME: "0.4.3"
+  VERSION_NAME: "0.5.${{ github.run_number }}"
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,6 +27,8 @@ jobs:
           mkdir -p www
           if [ -f index.html ]; then cp index.html www/index.html; else cp "$(ls *.html | head -n1)" www/index.html; fi
           cp -r runners www/runners
+          sed -i "s/const APP_VERSION='[^']*'/const APP_VERSION='$VERSION_NAME'/" www/index.html
+          grep -c "APP_VERSION='$VERSION_NAME'" www/index.html
       - name: Install Capacitor
         run: |
           npm init -y
@@ -52,12 +56,131 @@ jobs:
       - name: Add Android
         run: |
           npx cap add android
-          sed -i 's#</manifest>#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><uses-permission android:name="android.permission.USE_EXACT_ALARM"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/></manifest>#' android/app/src/main/AndroidManifest.xml
+          sed -i 's#</manifest>#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><uses-permission android:name="android.permission.USE_EXACT_ALARM"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/><uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/></manifest>#' android/app/src/main/AndroidManifest.xml
           sed -i "s/versionCode 1/versionCode $((1000 + GITHUB_RUN_NUMBER))/" android/app/build.gradle
           sed -i "s/versionName \"1.0\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
           sed -i "s#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'#dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs', '../../node_modules/@capacitor/background-runner/android/src/main/libs'#" android/app/build.gradle
           grep -n "background-runner" android/app/build.gradle
           npx cap sync android
+      - name: In-app updater (native)
+        run: |
+          D="android/app/src/main/java/$(echo "$APP_ID" | tr . /)"
+          mkdir -p "$D"
+          cat > "$D/ApkUpdatePlugin.java" <<'EOF3'
+          package __PKG__;
+
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.provider.Settings;
+          import androidx.core.content.FileProvider;
+          import com.getcapacitor.JSObject;
+          import com.getcapacitor.Plugin;
+          import com.getcapacitor.PluginCall;
+          import com.getcapacitor.PluginMethod;
+          import com.getcapacitor.annotation.CapacitorPlugin;
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.InputStream;
+          import java.net.HttpURLConnection;
+          import java.net.URL;
+
+          @CapacitorPlugin(name = "ApkUpdate")
+          public class ApkUpdatePlugin extends Plugin {
+              private File apkFile() {
+                  File dir = new File(getContext().getCacheDir(), "update");
+                  dir.mkdirs();
+                  return new File(dir, "update.apk");
+              }
+
+              @PluginMethod
+              public void download(final PluginCall call) {
+                  final String link = call.getString("url");
+                  if (link == null) { call.reject("no url"); return; }
+                  new Thread(() -> {
+                      try {
+                          File out = apkFile();
+                          File part = new File(out.getParentFile(), "update.part");
+                          HttpURLConnection c = (HttpURLConnection) new URL(link).openConnection();
+                          c.setInstanceFollowRedirects(true);
+                          c.setConnectTimeout(15000);
+                          c.setReadTimeout(30000);
+                          long total = c.getContentLengthLong();
+                          InputStream in = c.getInputStream();
+                          FileOutputStream os = new FileOutputStream(part);
+                          byte[] buf = new byte[32768];
+                          long got = 0;
+                          int last = -1;
+                          int n;
+                          while ((n = in.read(buf)) > 0) {
+                              os.write(buf, 0, n);
+                              got += n;
+                              if (total > 0) {
+                                  int pct = (int) (got * 100 / total);
+                                  if (pct != last) {
+                                      last = pct;
+                                      JSObject e = new JSObject();
+                                      e.put("percent", pct);
+                                      notifyListeners("progress", e);
+                                  }
+                              }
+                          }
+                          os.close();
+                          in.close();
+                          if (got < 100000) { call.reject("file too small"); return; }
+                          if (out.exists()) out.delete();
+                          part.renameTo(out);
+                          JSObject r = new JSObject();
+                          r.put("size", got);
+                          call.resolve(r);
+                      } catch (Exception e) {
+                          call.reject(String.valueOf(e.getMessage()));
+                      }
+                  }).start();
+              }
+
+              @PluginMethod
+              public void install(PluginCall call) {
+                  try {
+                      Context ctx = getContext();
+                      JSObject r = new JSObject();
+                      if (!ctx.getPackageManager().canRequestPackageInstalls()) {
+                          Intent s = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + ctx.getPackageName()));
+                          s.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                          ctx.startActivity(s);
+                          r.put("needPermission", true);
+                          call.resolve(r);
+                          return;
+                      }
+                      Uri u = FileProvider.getUriForFile(ctx, ctx.getPackageName() + ".fileprovider", apkFile());
+                      Intent i = new Intent(Intent.ACTION_VIEW);
+                      i.setDataAndType(u, "application/vnd.android.package-archive");
+                      i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                      ctx.startActivity(i);
+                      r.put("started", true);
+                      call.resolve(r);
+                  } catch (Exception e) {
+                      call.reject(String.valueOf(e.getMessage()));
+                  }
+              }
+          }
+          EOF3
+          cat > "$D/MainActivity.java" <<'EOF4'
+          package __PKG__;
+
+          import android.os.Bundle;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  registerPlugin(ApkUpdatePlugin.class);
+                  super.onCreate(savedInstanceState);
+              }
+          }
+          EOF4
+          sed -i "s/__PKG__/$APP_ID/" "$D/ApkUpdatePlugin.java" "$D/MainActivity.java"
+          cat android/app/src/main/res/xml/file_paths.xml
       - name: Signing key
         env:
           KS_B64: ${{ secrets.KS_B64 }}
@@ -94,3 +217,15 @@ jobs:
         with:
           name: pmk-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Publish release (обновление для пользователей)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+        run: |
+          APK="pmk-$VERSION_NAME.apk"
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$APK"
+          TEXT=$(printf '%s' "$COMMIT_MSG" | head -n1)
+          case "$TEXT" in "Add files via upload"*|"Update "*|"Create "*|"Rename "*|"Delete "*) TEXT="";; esac
+          jq -n --arg v "$VERSION_NAME" --arg t "$TEXT" --arg u "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION_NAME/$APK" '{version:$v,text:$t,url:$u}' > version.json
+          cat version.json
+          gh release create "v$VERSION_NAME" "$APK" version.json --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Версия $VERSION_NAME" --notes "${TEXT:-Обновление}"
