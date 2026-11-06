@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+env:
+  APP_ID: com.sched.app
+  APP_NAME: "Расписание ПМК"
+  VERSION_NAME: "0.5"
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,10 +29,10 @@ jobs:
           npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 @capacitor/local-notifications@7
       - name: Config
         run: |
-          cat > capacitor.config.json <<'EOF'
+          cat > capacitor.config.json <<EOF
           {
-            "appId": "com.pmk.schedule.test",
-            "appName": "Расписание ПМК Тест",
+            "appId": "$APP_ID",
+            "appName": "$APP_NAME",
             "webDir": "www",
             "plugins": { "CapacitorHttp": { "enabled": true } }
           }
@@ -37,7 +41,17 @@ jobs:
         run: |
           npx cap add android
           sed -i 's#</manifest>#<uses-permission android:name="android.permission.POST_NOTIFICATIONS"/><uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/><uses-permission android:name="android.permission.USE_EXACT_ALARM"/><uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/></manifest>#' android/app/src/main/AndroidManifest.xml
+          sed -i "s/versionCode 1/versionCode $((1000 + GITHUB_RUN_NUMBER))/" android/app/build.gradle
+          sed -i "s/versionName \"1.0\"/versionName \"$VERSION_NAME\"/" android/app/build.gradle
           npx cap sync android
+      - name: Icon (только если в репозитории есть PNG)
+        run: |
+          if ls *.png >/dev/null 2>&1; then
+            mkdir -p assets
+            cp "$(ls *.png | head -n1)" assets/icon.png
+            npm i @capacitor/assets
+            npx capacitor-assets generate --android --iconBackgroundColor '#ffffff' --iconBackgroundColorDark '#ffffff'
+          fi
       - name: Build APK
         run: |
           cd android
@@ -45,5 +59,5 @@ jobs:
           ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
         with:
-          name: pmk-test-apk
+          name: pmk-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
