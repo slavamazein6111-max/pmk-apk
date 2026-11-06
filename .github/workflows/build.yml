@@ -6,7 +6,7 @@ on:
 env:
   APP_ID: com.sched.app
   APP_NAME: "Расписание ПМК"
-  VERSION_NAME: "0.5"
+  VERSION_NAME: "0.4.3"
 jobs:
   build:
     runs-on: ubuntu-latest
