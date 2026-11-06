@@ -105,6 +105,8 @@ jobs:
                           c.setInstanceFollowRedirects(true);
                           c.setConnectTimeout(15000);
                           c.setReadTimeout(30000);
+                          int code = c.getResponseCode();
+                          if (code != 200) { c.disconnect(); call.reject("HTTP " + code); return; }
                           long total = c.getContentLengthLong();
                           InputStream in = c.getInputStream();
                           FileOutputStream os = new FileOutputStream(part);
