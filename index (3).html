@@ -712,6 +712,17 @@ try{const l=buildPlan();o.push(l.length?'Ближайшее: '+l[0].title+' — 
 }
 return o.join('\n');
 }
+async function devDiagText(){
+const o=[await diagText()];
+o.push('Версия приложения: '+APP_VERSION);
+o.push('Уведомления в настройках: '+(set.on?'вкл':'выкл')+' · основная группа: '+(set.mainName||'—')+' · за '+set.lead+' мин');
+if(!native&&hasNotif)o.push('Разрешение браузера: '+Notification.permission);
+o.push('Безопасный контекст: '+isSecureContext);
+o.push('Сеть: '+(navigator.onLine?'онлайн':'офлайн')+' · API: '+API);
+o.push('Фоновый раннер: '+(BR?'есть':'нет'));
+o.push('Время: '+new Date().toLocaleString('ru-RU')+' · пояс '+Intl.DateTimeFormat().resolvedOptions().timeZone);
+return o.join('\n');
+}
 function renderSet(){
 let hint=native?'Приходят по расписанию, даже когда приложение закрыто':'Приходят по расписанию';
 if(!hasNotif)hint='Уведомления недоступны на этом устройстве';
@@ -880,6 +891,8 @@ h+=`<div class="dh">Сеть</div><div class="dgrid">${btn('api','Провери
 <div class="srow" style="display:block;border:0;padding-bottom:0"><small>Ссылка на version.json (проверка новой версии) · ${esc(updLast||'не проверялось')}${upd?' · найдена '+esc(upd.version):''}</small><input class="tm dtm" id="devUpdUrl" value="${esc(updUrl)}" placeholder="https://…/version.json" style="margin-top:8px"><div class="dgrid">${btn('updchk','Сохранить и проверить')}</div></div>
 <div class="srow" style="display:block;border:0;padding-bottom:0"><small>Адрес API — после применения страница перезагрузится</small><input class="tm dtm" id="devApiUrl" value="${esc(API)}" style="margin-top:8px"><div class="dgrid">${btn('apiset','Применить')}${btn('apireset','По умолчанию',1)}</div></div>`;
 if(devApi)h+=`<div class="dv pre">${esc(devApi)}</div>`;
+h+=`<div class="dh">Диагностика</div><div class="dgrid">${btn('ddiag','Запустить')}${btn('ddiagcopy','Копировать',1)}</div>`;
+if(window.__ddiag)h+=`<div class="dv pre">${esc(window.__ddiag)}</div>`;
 h+=`<div class="dh">Уведомления</div><div class="dgrid">${btn('notif','Тест')}${btn('npre','Перед парой',1)}${btn('nmorn','Утреннее',1)}${btn('neve','Вечернее',1)}${btn('nchg','Изменение',1)}${btn('sent','Сбросить «отправлено»',1)}${btn('plan',window.__plan?'Скрыть план':'План отправки',1)}</div>`;
 if(window.__plan){
 const pl2=buildPlan();
@@ -967,6 +980,8 @@ if(a==='json'){devJson=!devJson;renderDev()}
 if(a==='copy')copyText(JSON.stringify(days.get(st.day)||null,null,1),'JSON дня '+st.day);
 if(a==='api')checkApi();
 if(a==='notif')devNotify('Тестовое уведомление','Меню разработчика');
+if(a==='ddiag'){window.__ddiag='Проверяю…';renderDev();try{window.__ddiag=await devDiagText()}catch(err){window.__ddiag='Ошибка: '+err.message}renderDev()}
+if(a==='ddiagcopy'){if(window.__ddiag)copyText(window.__ddiag,'Диагностика');else toast('Сначала запустите диагностику','')}
 if(a==='npre'){
 const l=(myLessons(t)||[]).find(x=>rng(x.s));
 if(!l){toast('Нет занятий основной группы сегодня','Выберите основную группу ★');return}
