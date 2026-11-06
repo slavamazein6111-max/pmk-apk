@@ -216,6 +216,7 @@ jobs:
           import android.graphics.PorterDuff;
           import android.graphics.PorterDuffXfermode;
           import android.graphics.Paint;
+          import android.graphics.Path;
           import android.graphics.RectF;
           import android.os.Bundle;
           import android.view.View;
@@ -435,9 +436,12 @@ jobs:
                   cv.drawRect(rf, p);
                   p.setShader(null);
                   Paint mp = new Paint(Paint.ANTI_ALIAS_FLAG);
-                  mp.setColor(0xFFFFFFFF);
-                  mp.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
-                  cv.drawRoundRect(rf, r, r, mp);
+                  mp.setColor(0xFF000000);
+                  mp.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+                  Path outside = new Path();
+                  outside.addRoundRect(rf, r, r, Path.Direction.CW);
+                  outside.setFillType(Path.FillType.INVERSE_WINDING);
+                  cv.drawPath(outside, mp);
                   Paint sp = new Paint(Paint.ANTI_ALIAS_FLAG);
                   sp.setStyle(Paint.Style.STROKE);
                   sp.setStrokeWidth(stroke);
