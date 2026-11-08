@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <script>
-/*const APP_VERSION='0.5.1'*/
+/*const APP_VERSION='0.5.2'*/
 window.HTML_REV=12;
 (function(){try{
 if(window.__pmkOta)return;
@@ -235,8 +235,19 @@ const devNet={offline:false,fail:false,delay:0};
 const todayS=()=>ymd(nowD());
 const _fc=new Map();
 const fmt=(s,o)=>{const k=o?s+'|'+JSON.stringify(o):s;let v=_fc.get(k);if(v===undefined){v=parse(s).toLocaleDateString('ru-RU',o);if(_fc.size>600)_fc.clear();_fc.set(k,v)}return v};
-const mins=t=>{const m=/(\d+):(\d+)/.exec(t||'');return m?+m[1]*60+ +m[2]:9999};
-const rng=t=>{const m=/(\d+):(\d+)\s*[-–]\s*(\d+):(\d+)/.exec(t||'');return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null};
+const mins=t=>{const m=/(\d{1,2})\s*[:.]\s*(\d{2})/.exec(t||'');return m?+m[1]*60+ +m[2]:9999};
+const rng=t=>{const m=/(\d{1,2})\s*[:.]\s*(\d{2})\s*(?:[-–—−‒―]|до|по|to)\s*(\d{1,2})\s*[:.]\s*(\d{2})/i.exec(t||'');return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null};
+const SLOT=(()=>{try{return JSON.parse(localStorage.getItem('pmk-slot')||'{}')||{}}catch(e){return {}}})();   // номер пары -> «ЧЧ:ММ-ЧЧ:ММ», запасной вариант если API не прислал время
+function learnBells(txt,wd){   // разбор текста вида «1 пара 8.30 – 9.10, 9.15 – 9.55; 9.55 – 10.50 большой перерыв; 2 пара …»
+if(!txt||!/пара/i.test(txt))return;
+const T=/(\d{1,2})[:.](\d{2})\s*[-–—−]\s*(\d{1,2})[:.](\d{2})/g,acc={};let cur=0;
+for(const seg of String(txt).split(/;/)){
+const pm=/(\d)\s*пара/i.exec(seg);if(pm)cur=+pm[1];
+if(/больш|перерыв/i.test(seg)||!cur)continue;
+let m;T.lastIndex=0;while((m=T.exec(seg))){const a=+m[1]*60+ +m[2],b=+m[3]*60+ +m[4];const o=acc[cur]||(acc[cur]=[a,b]);o[0]=Math.min(o[0],a);o[1]=Math.max(o[1],b)}}
+let ok=0;for(const [n,[a,b]] of Object.entries(acc)){const v=`${Math.floor(a/60)}:${String(a%60).padStart(2,'0')}-${Math.floor(b/60)}:${String(b%60).padStart(2,'0')}`;SLOT[wd+':'+n]=v;SLOT['*:'+n]=v;ok=1}
+if(ok)try{localStorage.setItem('pmk-slot',JSON.stringify(SLOT))}catch(e){}
+}
 const dur=m=>{const h=Math.floor(m/60),r=m%60;return (h?h+' ч ':'')+(r?r+' мин':'')};
 let _pT=0;
 function persist(){clearTimeout(_pT);_pT=setTimeout(persistNow,900)}
@@ -261,7 +272,7 @@ let set={on:false,main:'',mainName:'',lead:5,eve:true,eveT:'20:00',morn:true,mor
 try{set={...set,...JSON.parse(localStorage.getItem('pmk-set')||'{}')}}catch(e){}
 set.pred=false;
 document.addEventListener('visibilitychange',()=>document.documentElement.classList.toggle('hid',document.hidden));
-const APP_VERSION='0.5.1';
+const APP_VERSION='0.5.2';
 const TG_URL='https://t.me/slvdevvv';
 const hx=h=>{h=h.replace('#','');if(h.length==3)h=[...h].map(c=>c+c).join('');return[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
 const mix=(a,b,t)=>{const A=hx(a),B=hx(b);return'#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
@@ -469,7 +480,26 @@ if(box.__rd===dh&&box.firstChild)return;
 box.__rd=dh;box.innerHTML=dh;
 box.querySelector('.on')?.scrollIntoView({inline:'center',block:'nearest'});
 }
+
+function fixTimes(){
+const ds=[...days.values()].filter(d=>d&&!d.demo&&d.date&&d.lessons);
+const save=()=>{try{localStorage.setItem('pmk-slot',JSON.stringify(SLOT))}catch(e){}};
+for(const d of ds){const wd=parse(d.date).getDay();
+learnBells(d.msg,wd);Object.values(d.gmsg||{}).forEach(m=>learnBells(m,wd));
+for(const l of d.lessons)if(!l.k&&l.n&&rng(l.s)){SLOT[wd+':'+l.n]=l.s;if(!SLOT['*:'+l.n])SLOT['*:'+l.n]=l.s}}
+let ch=0;
+for(const d of ds){const wd=parse(d.date).getDay();let touched=0;
+const byGroup={};
+for(const l of d.lessons)if(!l.k)(byGroup[l.g]||(byGroup[l.g]=[])).push(l);
+for(const arr of Object.values(byGroup)){
+const hasN=arr.some(l=>l.n);
+arr.forEach((l,i)=>{if(rng(l.s))return;const n=l.n||(hasN?'':i+1);if(!n)return;
+const v=SLOT[wd+':'+n]||SLOT['*:'+n];if(v){l.s=v;touched=1}})}
+if(touched){d.lessons.sort((a,b)=>mins(a.s)-mins(b.s));ch=1}}
+if(ch){save();try{persist()}catch(e){}}
+}
 function render(){
+try{fixTimes()}catch(e){}
 ensureEnt();renderDays();syncHash();
 document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.m===st.mode));
 $('ent').textContent=entName()||'Выберите';updStar();
