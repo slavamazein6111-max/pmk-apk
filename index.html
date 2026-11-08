@@ -1011,7 +1011,7 @@ ensureEnt();render();syncUI();
 }
 addEventListener('online',async()=>{try{const b=await loadBase();ensureEnt();render();if(set.auto)syncAll(false,b)}catch(e){render()}});
 addEventListener('offline',()=>{netOff=true;render()});
-const UPDATE_URL='https://github.com/slavamazein6111-max/pmk-apk/releases/latest/download/version.json';
+const UPDATE_URL='https://github.com/slavamazein6111-max/pmk-apkX/releases/latest/download/version.json';
 const openUrl=u=>{try{const B=window.Capacitor?.Plugins?.Browser;if(native&&B&&B.open)return B.open({url:u})}catch(e){}window.open(u,'_blank')};
 let updUrl=UPDATE_URL,upd=null,updLast='',updOk=false,updAt=0;
 try{const u=localStorage.getItem('pmk-upd-url');if(u)updUrl=u}catch(e){}
