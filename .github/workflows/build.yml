@@ -241,7 +241,7 @@ jobs:
               static final Locale RU = new Locale("ru");
 
               static class L { int a, b, n; boolean k; String d, room, t; }
-              static class T { int bg, sf, tx, mu, di, ac, onAc, alpha, g0, g1, g2, g3, ga, gb; boolean light; }
+              static class T { int bg, sf, tx, mu, di, ac, onAc, alpha, g0, g1, g2, g3, ga, gb, mbd, mhi, mlo, mok; boolean light, mc; }
               static class Pick { L l; int off; boolean cur; Calendar day; }
 
               // 0 строка, 1 следующая пара, 2 сегодня, 3 завтра, 4 неделя
@@ -300,6 +300,11 @@ jobs:
                   r.ga = col(t, "ga", r.ac);
                   r.gb = col(t, "gb", r.ac);
                   r.light = t != null && t.optInt("lt", 0) == 1;
+                  r.mc = t != null && t.optInt("mc", 0) == 1;   // тема «Майнкрафт»: пиксельный стиль
+                  r.mbd = col(t, "bd", 0xFF000000);
+                  r.mhi = col(t, "hi", 0xFFA0A0A0);
+                  r.mlo = col(t, "lo", 0xFF3B3B3B);
+                  r.mok = col(t, "ok", 0xFF5CB335);
                   int o = d.optInt("wo", 85);
                   if (o < 35) o = 35;
                   if (o > 100) o = 100;
@@ -452,6 +457,66 @@ jobs:
                   return b;
               }
 
+              // ---------- стиль «Майнкрафт» ----------
+              // панель как окно интерфейса игры: тёмный «каменный» фон с шумом, чёрная рамка, светлая/тёмная грани, срезанные углы
+              static Bitmap mcPanel(int w, int h, float px, T t) {
+                  Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                  Canvas cv = new Canvas(b);
+                  Paint p = new Paint();
+                  p.setAntiAlias(false);
+                  int u = Math.max(2, Math.round(px * 2f));
+                  int cs = u * 4;
+                  for (int y = 0, yi = 0; y < h; y += cs, yi++) {
+                      for (int x = 0, xi = 0; x < w; x += cs, xi++) {
+                          int k = (((xi * 73856093) ^ (yi * 19349663)) >>> 7) & 3;
+                          float f = k == 0 ? 0f : k == 1 ? 0.05f : k == 2 ? 0.10f : 0.025f;
+                          p.setColor(mix(0xFFFFFFFF, t.bg, f));
+                          cv.drawRect(x, y, Math.min(w, x + cs), Math.min(h, y + cs), p);
+                      }
+                  }
+                  p.setColor(withA(t.mhi, 0.5f));
+                  cv.drawRect(u, u, w - u, u * 2, p);
+                  cv.drawRect(u, u, u * 2, h - u, p);
+                  p.setColor(withA(t.mlo, 0.7f));
+                  cv.drawRect(u, h - u * 2, w - u, h - u, p);
+                  cv.drawRect(w - u * 2, u, w - u, h - u, p);
+                  p.setColor(t.mbd);
+                  cv.drawRect(u, 0, w - u, u, p);
+                  cv.drawRect(u, h - u, w - u, h, p);
+                  cv.drawRect(0, u, u, h - u, p);
+                  cv.drawRect(w - u, u, w, h - u, p);
+                  cv.drawRect(u, u, u * 2, u * 2, p);
+                  cv.drawRect(w - u * 2, u, w - u, u * 2, p);
+                  cv.drawRect(u, h - u * 2, u * 2, h - u, p);
+                  cv.drawRect(w - u * 2, h - u * 2, w - u, h - u, p);
+                  return b;
+              }
+
+              // полоса прогресса как шкала опыта: рамка, тёмный трек, зелёная заливка с бликом и делениями
+              static Bitmap mcBar(int w, int h, float pr, T t) {
+                  Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                  Canvas cv = new Canvas(b);
+                  Paint p = new Paint();
+                  p.setAntiAlias(false);
+                  int e = 2;
+                  p.setColor(t.mbd);
+                  cv.drawRect(0, 0, w, h, p);
+                  p.setColor(t.mlo);
+                  cv.drawRect(e, e, w - e, h - e, p);
+                  float fw = (w - 2 * e) * Math.max(0f, Math.min(1f, pr));
+                  p.setColor(t.mok);
+                  cv.drawRect(e, e, e + fw, h - e, p);
+                  p.setColor(mix(0xFFFFFFFF, t.mok, 0.35f));
+                  cv.drawRect(e, e, e + fw, e + 3, p);
+                  p.setColor(t.mbd);
+                  for (int i = 1; i < 10; i++) {
+                      float x = e + (w - 2 * e) * i / 10f;
+                      cv.drawRect(x - 1, e, x + 1, h - e, p);
+                  }
+                  return b;
+              }
+
+
               static void tint(RemoteViews rv, int id, int color) {
                   rv.setInt(id, "setColorFilter", color | 0xFF000000);
               }
@@ -526,7 +591,7 @@ jobs:
                   rv.setTextColor(R.id.w_left, t.mu);
                   rv.setViewVisibility(R.id.w_sub, sub.isEmpty() ? View.GONE : View.VISIBLE);
                   if (prog >= 0f) {
-                      rv.setImageViewBitmap(R.id.w_bar, bar(360, 16, prog, mix(t.ac, t.bg, 0.22f), t.ac));
+                      rv.setImageViewBitmap(R.id.w_bar, t.mc ? mcBar(360, 16, prog, t) : bar(360, 16, prog, mix(t.ac, t.bg, 0.22f), t.ac));
                       rv.setViewVisibility(R.id.w_bar, View.VISIBLE);
                       rv.setViewVisibility(R.id.w_left, View.VISIBLE);
                   } else {
@@ -602,8 +667,13 @@ jobs:
                       row.setTextColor(R.id.ra, cur ? t.ac : past ? t.di : t.mu);
                       tint(row, R.id.rbar, cur ? t.ac : past ? mix(t.tx, t.bg, 0.16f) : mix(t.ac, t.bg, 0.5f));
                       if (cur) {
-                          tint(row, R.id.rbg, t.ac);
-                          row.setInt(R.id.rbg, "setImageAlpha", t.light ? 60 : 72);
+                          if (t.mc) {
+                              row.setImageViewResource(R.id.rbg, R.drawable.widget_mc_sel);
+                              row.setInt(R.id.rbg, "setImageAlpha", 255);
+                          } else {
+                              tint(row, R.id.rbg, t.ac);
+                              row.setInt(R.id.rbg, "setImageAlpha", t.light ? 60 : 72);
+                          }
                           row.setViewVisibility(R.id.rbg, View.VISIBLE);
                       } else {
                           row.setViewVisibility(R.id.rbg, View.GONE);
@@ -649,11 +719,12 @@ jobs:
                       col.setTextViewText(R.id.wp, ls.isEmpty() ? "—" : pairs(ls.size()));
                       col.setTextViewText(R.id.wt, ls.isEmpty() ? "" : fmt(ls.get(0).a));
                       col.setTextColor(R.id.wd, today ? t.ac : t.mu);
-                      col.setTextColor(R.id.wn, today ? t.onAc : past ? t.di : t.tx);
+                      col.setTextColor(R.id.wn, today ? (t.mc ? 0xFFFFFFA0 : t.onAc) : past ? t.di : t.tx);
                       col.setTextColor(R.id.wp, ls.isEmpty() || past ? t.di : t.tx);
                       col.setTextColor(R.id.wt, past ? t.di : t.mu);
                       if (today) {
-                          tint(col, R.id.wc, t.ac);
+                          if (t.mc) col.setImageViewResource(R.id.wc, R.drawable.widget_mc_sel);
+                          else tint(col, R.id.wc, t.ac);
                           col.setViewVisibility(R.id.wc, View.VISIBLE);
                       } else {
                           col.setViewVisibility(R.id.wc, View.INVISIBLE);
@@ -675,7 +746,7 @@ jobs:
                   }
                   RemoteViews rv = new RemoteViews(c.getPackageName(), layout);
                   float pxdp = Math.min(c.getResources().getDisplayMetrics().density, 640f / Math.max(wDp, hDp));
-                  rv.setImageViewBitmap(R.id.bg, glass(Math.round(wDp * pxdp), Math.round(hDp * pxdp), 26 * pxdp, Math.max(1f, 1.2f * pxdp), t));
+                  rv.setImageViewBitmap(R.id.bg, t.mc ? mcPanel(Math.round(wDp * pxdp), Math.round(hDp * pxdp), pxdp, t) : glass(Math.round(wDp * pxdp), Math.round(hDp * pxdp), 26 * pxdp, Math.max(1f, 1.2f * pxdp), t));
                   rv.setInt(R.id.bg, "setImageAlpha", t.alpha);
                   switch (kind) {
                       case 0: bindCompact(c, rv, data, t); break;
@@ -847,6 +918,15 @@ jobs:
           <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
               <solid android:color="#FFFFFFFF"/>
           </shape>
+          EOF9
+          cat > $R/drawable/widget_mc_sel.xml <<'EOF9'
+          <?xml version="1.0" encoding="utf-8"?>
+          <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+              <item><shape android:shape="rectangle"><solid android:color="#FF000000"/></shape></item>
+              <item android:left="2dp" android:top="2dp" android:right="2dp" android:bottom="2dp"><shape android:shape="rectangle"><solid android:color="#FF4A5380"/></shape></item>
+              <item android:left="2dp" android:top="2dp" android:right="4dp" android:bottom="4dp"><shape android:shape="rectangle"><solid android:color="#FFB4BDE8"/></shape></item>
+              <item android:left="4dp" android:top="4dp" android:right="4dp" android:bottom="4dp"><shape android:shape="rectangle"><solid android:color="#FF7B86B8"/></shape></item>
+          </layer-list>
           EOF9
           cat > $R/layout/widget_compact.xml <<'EOF10'
           <?xml version="1.0" encoding="utf-8"?>
