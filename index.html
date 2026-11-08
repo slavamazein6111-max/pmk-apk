@@ -238,16 +238,67 @@ const _fc=new Map();
 const fmt=(s,o)=>{const k=o?s+'|'+JSON.stringify(o):s;let v=_fc.get(k);if(v===undefined){v=parse(s).toLocaleDateString('ru-RU',o);if(_fc.size>600)_fc.clear();_fc.set(k,v)}return v};
 const mins=t=>{const m=/(\d{1,2})\s*[:.]\s*(\d{2})/.exec(t||'');return m?+m[1]*60+ +m[2]:9999};
 const rng=t=>{const m=/(\d{1,2})\s*[:.]\s*(\d{2})\s*(?:[-–—−‒―]|до|по|to)\s*(\d{1,2})\s*[:.]\s*(\d{2})/i.exec(t||'');return m?[+m[1]*60+ +m[2],+m[3]*60+ +m[4]]:null};
-const SLOT=(()=>{try{return JSON.parse(localStorage.getItem('pmk-slot')||'{}')||{}}catch(e){return {}}})();   // номер пары -> «ЧЧ:ММ-ЧЧ:ММ», запасной вариант если API не прислал время
-function learnBells(txt,wd){   // разбор текста вида «1 пара 8.30 – 9.10, 9.15 – 9.55; 9.55 – 10.50 большой перерыв; 2 пара …»
-if(!txt||!/пара/i.test(txt))return;
-const T=/(\d{1,2})[:.](\d{2})\s*[-–—−]\s*(\d{1,2})[:.](\d{2})/g,acc={};let cur=0;
-for(const seg of String(txt).split(/;/)){
-const pm=/(\d)\s*пара/i.exec(seg);if(pm)cur=+pm[1];
+/* ===== Единая система времени пар =====
+   Источник истины — сетка звонков BELLS: день недели (или '*') → номер пары → {s:[начало,конец], h:[[a1,b1],[a2,b2]]}, минуты от полуночи.
+   Пара = две половины с перерывом внутри; границы половинок берутся из РЕАЛЬНОЙ сетки, а не вычисляются.
+   Приоритет для пары: 1) сетка из сообщения API ЭТОГО дня  2) диапазон из поля start  3) сетка этого дня недели, выученная ранее  4) DEFAULT_BELLS.
+   Любая пара приводится к каноническому виду l.s='Ч:ММ-Ч:ММ' (+ l.h — половинки), поэтому все остальные части приложения читают одно и то же время. */
+const HALF_BRK=5;   // перерыв внутри пары, если точные половинки неизвестны
+/* Запасная сетка (если API не прислал ни время, ни сообщение со звонками). Формат: номер → [[начало1,конец1],[начало2,конец2]] в минутах.
+   Заполните по реальному расписанию звонков; пример: 1: [[8*60+30,9*60+10],[9*60+15,9*60+55]] */
+const DEFAULT_BELLS={};
+const BELLS_KEY='pmk-bells2';
+let BELLS=(()=>{try{const o=JSON.parse(localStorage.getItem(BELLS_KEY)||'{}');return o&&typeof o==='object'?o:{}}catch(e){return {}}})();
+let BELLS_VER=1;
+try{localStorage.removeItem('pmk-slot')}catch(e){}   // старый кэш времени мог содержать неверные значения — сбрасываем
+const fmtRange=(a,b)=>`${Math.floor(a/60)}:${pad(a%60)}-${Math.floor(b/60)}:${pad(b%60)}`;
+const mkBell=h=>({s:[h[0][0],h[h.length-1][1]],h:h.length===2?h:null});
+function parseBells(txt){   // «1 пара 8.30 – 9.10, 9.15 – 9.55; 9.55 – 10.50 большой перерыв; 2 пара …» → {номер:{s,h}} | null
+if(!txt||!/пар/i.test(txt))return null;
+const T=/(\d{1,2})\s*[:.]\s*(\d{2})\s*(?:[-–—−‒―]|до)\s*(\d{1,2})\s*[:.]\s*(\d{2})/g,acc={};let cur=0;
+for(const seg of String(txt).split(/[;\n]+/)){
+const pm=/(\d)\s*(?:-?\s*я)?\s*пара/i.exec(seg);if(pm)cur=+pm[1];
 if(/больш|перерыв/i.test(seg)||!cur)continue;
-let m;T.lastIndex=0;while((m=T.exec(seg))){const a=+m[1]*60+ +m[2],b=+m[3]*60+ +m[4];const o=acc[cur]||(acc[cur]=[a,b]);o[0]=Math.min(o[0],a);o[1]=Math.max(o[1],b)}}
-let ok=0;for(const [n,[a,b]] of Object.entries(acc)){const v=`${Math.floor(a/60)}:${String(a%60).padStart(2,'0')}-${Math.floor(b/60)}:${String(b%60).padStart(2,'0')}`;SLOT[wd+':'+n]=v;SLOT['*:'+n]=v;ok=1}
-if(ok)try{localStorage.setItem('pmk-slot',JSON.stringify(SLOT))}catch(e){}
+let m;T.lastIndex=0;while((m=T.exec(seg))){const a=+m[1]*60+ +m[2],b=+m[3]*60+ +m[4];if(b>a&&b-a<=130)(acc[cur]||(acc[cur]=[])).push([a,b])}}
+const out={};let prev=-1,ok=0;
+for(const n of Object.keys(acc).map(Number).sort((a,b)=>a-b)){
+const h=acc[n].sort((x,y)=>x[0]-y[0]);
+let good=h[0][0]>=prev;for(let i=1;i<h.length;i++)if(h[i][0]<h[i-1][1])good=false;
+const b=mkBell(h.length>2?[h[0],h[h.length-1]]:h),len=b.s[1]-b.s[0];
+if(!good||len<30||len>200)continue;
+out[n]=b;prev=b.s[1];ok=1}
+return ok?out:null}
+function learnBells(txt,wd){   // выучить звонки из текста и запомнить для дня недели; вернуть выученное
+const p=parseBells(txt);if(!p)return null;
+const cur=JSON.stringify(BELLS);
+BELLS[wd]={...(BELLS[wd]||{}),...p};BELLS['*']={...(BELLS['*']||{}),...p};
+if(JSON.stringify(BELLS)!==cur){BELLS_VER++;try{localStorage.setItem(BELLS_KEY,JSON.stringify(BELLS))}catch(e){}}
+return p}
+const dayBells=(msgs,wd)=>{const own={};for(const t of msgs){const p=learnBells(t,wd);if(p)Object.assign(own,p)}return own};
+const storedBell=(n,wd)=>(BELLS[wd]&&BELLS[wd][n])||(BELLS['*']&&BELLS['*'][n])||(DEFAULT_BELLS[n]?mkBell(DEFAULT_BELLS[n]):null);
+/* Привести времена пар одного дня к единому виду. own — сетка из сообщений ЭТОГО дня. Повторный вызов даёт тот же результат. */
+function resolveTimes(lessons,wd,own){
+const byGroup={};for(const l of lessons)if(!l.k)(byGroup[l.g]||(byGroup[l.g]=[])).push(l);
+for(const arr of Object.values(byGroup)){
+const hasN=arr.some(l=>l.n);
+arr.forEach((l,i)=>{
+const n=l.n||(hasN?'':i+1);if(!n)return;
+const r=rng(l.s),t0=mins(l.s),ob=own&&own[n],sb=storedBell(n,wd);
+const fits=b=>!!b&&(r?b.s[0]===r[0]&&b.s[1]===r[1]:t0>=9999||b.s[0]===t0);   // сетка подходит, только если совпадает с временем из API
+if(r){l.h=(ob&&fits(ob)&&ob.h)||(sb&&fits(sb)&&sb.h)||null;return}   // полный диапазон пришёл из API — он главный, сетка нужна лишь для половинок
+if(ob&&fits(ob)){l.s=fmtRange(ob.s[0],ob.s[1]);l.h=ob.h||null;return}
+if(sb&&fits(sb)){l.s=fmtRange(sb.s[0],sb.s[1]);l.h=sb.h||null;return}
+const b=ob||sb;   // сетка не совпала: берём из API начало, а длительность — из сетки
+if(b){const len=b.s[1]-b.s[0];l.s=t0<9999?fmtRange(t0,t0+len):fmtRange(b.s[0],b.s[1]);l.h=null}})}
+/* Классный час: если у него нет полного диапазона — берём время по номеру звонка, иначе ставим сразу после последней пары группы */
+const KL_DUR=30,KL_GAP=10;
+const ends={};for(const l of lessons)if(!l.k){const r=rng(l.s);if(r)ends[l.g]=Math.max(ends[l.g]||0,r[1])}
+for(const l of lessons){
+if(!l.k||rng(l.s))continue;
+const st=mins(l.s),kb=l.kn&&((own&&own[l.kn])||storedBell(l.kn,wd));
+if(st<9999){l.s=fmtRange(st,st+KL_DUR);continue}
+if(kb){l.s=fmtRange(kb.s[0],kb.s[1]);continue}
+if(ends[l.g]){const a=ends[l.g]+KL_GAP;l.s=fmtRange(a,a+KL_DUR)}}
 }
 const dur=m=>{const h=Math.floor(m/60),r=m%60;return (h?h+' ч ':'')+(r?r+' мин':'')};
 let _pT=0;
@@ -409,10 +460,13 @@ function normalize(j){
 const lessons=[],gmsg={};
 for(const [gid,g] of Object.entries(j.schedule||{})){
 if(g.message)gmsg[gid]=g.message;
-const push=(p,k)=>lessons.push({g:gid,gn:g.name,k:k?1:0,n:k?'':p.number,d:p.discipline,a:p.auditory_name||p.auditory||'',
-t:p.teacher||'',ti:p.teacher_id||p.teacher||'',s:p.start||'',st:p.status,p:p.progress||'',m:p.message||''});
+const push=(p,k)=>lessons.push({g:gid,gn:g.name,k:k?1:0,n:k?'':p.number,kn:k?(p.number||''):'',d:p.discipline,a:p.auditory_name||p.auditory||'',
+t:p.teacher_name||p.teacher||'',ti:p.teacher_id||p.teacher||'',s:p.time||p.start||'',st:p.status,p:p.progress||'',m:p.message||''});
 (g.pair||[]).forEach(p=>push(p,0));(g.klchas||[]).forEach(p=>push(p,1));
+if(!normalize._lg){normalize._lg=1;const f=(g.pair||[])[0];if(f)dlog('поля пары API: '+Object.keys(f).join(',')+' · time='+(f.time||f.start||'—'))}
 }
+const wd=j.date&&/^\d{4}-\d{2}-\d{2}$/.test(j.date)?parse(j.date).getDay():-1;
+try{resolveTimes(lessons,wd,dayBells([j.message||'',...Object.values(gmsg)],wd))}catch(e){}
 lessons.sort((a,b)=>mins(a.s)-mins(b.s));
 return {date:j.date,msg:j.message||'',gmsg,lessons,at:Date.now()};
 }
@@ -482,22 +536,17 @@ box.__rd=dh;box.innerHTML=dh;
 box.querySelector('.on')?.scrollIntoView({inline:'center',block:'nearest'});
 }
 
+const _fxv=new WeakMap();   // день -> версия сетки, для которой время уже приведено (чтобы не пересчитывать на каждый рендер)
 function fixTimes(){
-const ds=[...days.values()].filter(d=>d&&!d.demo&&d.date&&d.lessons);
-const save=()=>{try{localStorage.setItem('pmk-slot',JSON.stringify(SLOT))}catch(e){}};
-for(const d of ds){const wd=parse(d.date).getDay();
-learnBells(d.msg,wd);Object.values(d.gmsg||{}).forEach(m=>learnBells(m,wd));
-for(const l of d.lessons)if(!l.k&&l.n&&rng(l.s)){SLOT[wd+':'+l.n]=l.s;if(!SLOT['*:'+l.n])SLOT['*:'+l.n]=l.s}}
 let ch=0;
-for(const d of ds){const wd=parse(d.date).getDay();let touched=0;
-const byGroup={};
-for(const l of d.lessons)if(!l.k)(byGroup[l.g]||(byGroup[l.g]=[])).push(l);
-for(const arr of Object.values(byGroup)){
-const hasN=arr.some(l=>l.n);
-arr.forEach((l,i)=>{if(rng(l.s))return;const n=l.n||(hasN?'':i+1);if(!n)return;
-const v=SLOT[wd+':'+n]||SLOT['*:'+n];if(v){l.s=v;touched=1}})}
-if(touched){d.lessons.sort((a,b)=>mins(a.s)-mins(b.s));ch=1}}
-if(ch){save();try{persist()}catch(e){}}
+for(const d of days.values()){
+if(!d||d.demo||!d.date||!d.lessons||_fxv.get(d)===BELLS_VER)continue;
+const wd=parse(d.date).getDay(),own=dayBells([d.msg||'',...Object.values(d.gmsg||{})],wd);
+const before=JSON.stringify(d.lessons.map(l=>[l.s,l.h||null]));
+resolveTimes(d.lessons,wd,own);
+if(JSON.stringify(d.lessons.map(l=>[l.s,l.h||null]))!==before){d.lessons.sort((a,b)=>mins(a.s)-mins(b.s));ch=1}
+_fxv.set(d,BELLS_VER)}
+if(ch){try{persist()}catch(e){}}
 }
 function render(){
 try{fixTimes()}catch(e){}
@@ -551,7 +600,7 @@ html+=`<div class="${bcls}"><div class="t"><b>${fmtT(prevEnd)}</b><span>${fmtT(r
 if(r)prevEnd=Math.max(prevEnd??0,r[1]);
 let cls='row'+(l.k?' kl':''),badge='',bar='';
 if(live&&r){
-if(nowM>=r[0]&&nowM<r[1]){cls+=' now';badge='<span class="badge">идёт</span>';bar=(!l.k&&halfBar(r,nowM))||`<div class="bar">${barI(r[0],r[1])}</div>`}
+if(nowM>=r[0]&&nowM<r[1]){cls+=' now';badge='<span class="badge">идёт</span>';bar=(!l.k&&halfBar(l,r))||`<div class="bar">${barI(r[0],r[1])}</div>`}
 else if(nowM>=r[1])cls+=' past';
 else if(!nextDone){nextDone=true;badge='<span class="badge n">далее</span>'}
 }
@@ -562,7 +611,7 @@ const note=[l.p,l.m].filter(Boolean).join(' · ');
 html+=`<div class="${cls}"><div class="t"><b>${r?fmtT(r[0]):''}</b><span>${r?fmtT(r[1]):''}</span></div>
 <div class="c"><div class="card"><div class="disc">${esc(l.d)}${badge}</div>
 <div class="meta">${aud?`<span class="a">${esc(aud)}</span>`:''}${who?`<span>${esc(who)}</span>`:''}</div>
-${l.k?'':halvesHtml(r,live,nowM)}${note?`<div class="note">${esc(note)}</div>`:''}${bar}</div></div></div>`;
+${l.k?'':halvesHtml(l,r,live,nowM)}${note?`<div class="note">${esc(note)}</div>`:''}${bar}</div></div></div>`;
 }
 $('out').innerHTML=html;
 }
@@ -571,24 +620,29 @@ const fmtAt=ts=>new Date(ts).toLocaleString('ru-RU',{day:'numeric',month:'short'
 const offBanner=day=>`<div class="offb"><span>Нет подключения · показаны сохранённые данные${day&&day.at?' от '+fmtAt(day.at):''}</span><button onclick="retry()">Повторить</button></div>`;
 window.retry=async()=>{try{const b=await loadBase();ensureEnt();render();if(!days.has(st.day)){await ensureDay(st.day);render()}if(set.auto)syncAll(false,b)}catch(e){render()}};
 const fmtT=m=>`${Math.floor(m/60)}:${pad(m%60)}`;
-// пара = две половины с перерывом внутри (HALF_BRK минут); только для обычных пар (от 80 мин)
-const HALF_BRK=5;
-const halfMid=r=>r[0]+Math.floor((r[1]-r[0]-HALF_BRK)/2);   // конец первой половины: (длина пары − перерыв) / 2
 const nowF=()=>{const n=nowD();return n.getHours()*60+n.getMinutes()+n.getSeconds()/60};   // минуты с долями, чтобы полоса шла плавно
 const barPct=(a,b,x)=>Math.max(0,Math.min(100,(x-a)/(b-a)*100));
 const barI=(a,b)=>`<i data-a="${a}" data-b="${b}" style="width:${barPct(a,b,nowF()).toFixed(2)}%"></i>`;   // data-a/b: границы отрезка в минутах, ширину потом плавно двигает smoothBars()
-function halfBar(r,nowM){
-if(!r||r[1]-r[0]<80)return null;
-nowM=nowF();const m=halfMid(r),b0=m+HALF_BRK;
-if(nowM<m)return `<div class="bar">${barI(r[0],m)}</div>`;
-if(nowM<b0)return `<div class="bl">перерыв ${HALF_BRK} минут</div><div class="bar brk">${barI(m,b0)}</div>`;
-return `<div class="bar">${barI(b0,r[1])}</div>`}
-function halvesHtml(r,live,nowM){
-if(!r||r[1]-r[0]<80)return '';
-const m=halfMid(r),a=[r[0],m],b=[m+HALF_BRK,r[1]];
+// половинки пары: реальные (l.h из сетки звонков) или поровну с перерывом HALF_BRK; только для обычных пар (от 80 мин)
+function halfParts(l,r){
+if(!r||l.k)return null;
+const h=l.h;
+if(Array.isArray(h)&&h.length===2&&h[0][0]===r[0]&&h[1][1]===r[1]&&h[0][1]<=h[1][0])return h;
+if(r[1]-r[0]<80||r[1]-r[0]>100)return null;
+const x=Math.floor((r[1]-r[0]-HALF_BRK)/2);
+return [[r[0],r[0]+x],[r[0]+x+HALF_BRK,r[1]]]}
+function halfBar(l,r){
+const p=halfParts(l,r);if(!p)return null;
+const x=nowF(),A=p[0],B=p[1],bk=B[0]-A[1];
+if(x<A[1])return `<div class="bar">${barI(A[0],A[1])}</div>`;
+if(x<B[0])return `<div class="bl">перерыв ${bk} ${pl(bk,'минута','минуты','минут')}</div><div class="bar brk">${barI(A[1],B[0])}</div>`;
+return `<div class="bar">${barI(B[0],B[1])}</div>`}
+function halvesHtml(l,r,live,nowM){
+const p=halfParts(l,r);if(!p)return '';
+const a=p[0],b=p[1],bk=b[0]-a[1];
 let o1='',ob='',o2='';
 if(live){if(nowM>=a[0]&&nowM<a[1])o1=' on';else if(nowM>=a[1]&&nowM<b[0])ob=' on';else if(nowM>=b[0]&&nowM<b[1])o2=' on'}
-return `<div class="halves"><span class="h${o1}">${fmtT(a[0])}–${fmtT(a[1])}</span><span class="hb${ob}" title="перерыв внутри пары">${HALF_BRK} мин</span><span class="h${o2}">${fmtT(b[0])}–${fmtT(b[1])}</span></div>`}
+return `<div class="halves"><span class="h${o1}">${fmtT(a[0])}–${fmtT(a[1])}</span><span class="hb${ob}" title="перерыв внутри пары">${bk} мин</span><span class="h${o2}">${fmtT(b[0])}–${fmtT(b[1])}</span></div>`}
 async function go(date){
 st.day=date;loading=!days.has(date);render();
 if(loading){await ensureDay(date);loading=false;if(st.day===date){ensureEnt();render()}}
