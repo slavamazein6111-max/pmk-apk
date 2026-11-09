@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <script>
 /*const APP_VERSION='0.5.2'*/
+/*const APP_CHANNEL='release'*/
 window.HTML_REV=13;
 (function(){try{
 if(window.__pmkOta)return;
@@ -14,6 +15,8 @@ if(tr>=2){localStorage.removeItem('pmk-ota');localStorage.setItem('pmk-ota-try',
 localStorage.setItem('pmk-ota-try',String(tr+1));
 var K='const APP_VERSION',m=(document.currentScript.textContent.match(new RegExp(K+"='([^']*)'"))||[])[1],h=o.html;
 if(m)h=h.replace(new RegExp(K+"='[^']*'",'g'),K+"='"+m+"'");
+var K2='const APP_CHANNEL',m2=(document.currentScript.textContent.match(new RegExp(K2+"='([^']*)'"))||[])[1];
+if(m2)h=h.replace(new RegExp(K2+"='[^']*'",'g'),K2+"='"+m2+"'");
 window.__pmkOta=o.rev;
 document.open();document.write(h);document.close();
 }catch(e){}})();
@@ -326,7 +329,7 @@ let set={on:false,main:'',mainName:'',lead:5,eve:true,eveT:'20:00',morn:true,mor
 try{set={...set,...JSON.parse(localStorage.getItem('pmk-set')||'{}')}}catch(e){}
 set.pred=false;
 document.addEventListener('visibilitychange',()=>document.documentElement.classList.toggle('hid',document.hidden));
-const APP_VERSION='0.5.2';const UI_VERSION='0.5.7';
+const APP_VERSION='0.5.2';const APP_CHANNEL='release';const BETA_LABEL=APP_CHANNEL==='test'?'test':'beta';document.querySelectorAll('.beta').forEach(e=>{e.textContent=BETA_LABEL});const UI_VERSION='0.5.7';
 const TG_URL='https://t.me/slvdevvv';
 const hx=h=>{h=h.replace('#','');if(h.length==3)h=[...h].map(c=>c+c).join('');return[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
 const mix=(a,b,t)=>{const A=hx(a),B=hx(b);return'#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
@@ -1257,7 +1260,7 @@ if(native&&window.__noExact&&!lastDenied)hint='Разрешите точные �
 const row=(t,sub,r,a='')=>`<div class="srow"${a}><div><b>${t}</b>${sub?`<small>${sub}</small>`:''}</div>${r}</div>`;
 const sw=k=>`<label class="sw"><input type="checkbox" data-k="${k}"${set[k]?' checked':''}><i></i></label>`;
 const tm=(k,v)=>`<div style="display:flex;align-items:center"><input class="tm" type="time" data-k="${k}" value="${v}">`;
-let h=`<div class="shead"><h3>${setTab==='shop'?'Магазин':'Напоминания'}</h3><button data-a="close">Готово</button></div><div class="stabs"><button data-tab="rem" class="${setTab==='rem'?'on':''}">Напоминания</button><button data-tab="shop" class="${setTab==='shop'?'on':''}">Магазин<em class="beta">beta</em></button></div><div class="sbody">`;
+let h=`<div class="shead"><h3>${setTab==='shop'?'Магазин':'Напоминания'}</h3><button data-a="close">Готово</button></div><div class="stabs"><button data-tab="rem" class="${setTab==='rem'?'on':''}">Напоминания</button><button data-tab="shop" class="${setTab==='shop'?'on':''}">Магазин<em class="beta">${BETA_LABEL}</em></button></div><div class="sbody">`;
 if(setTab==='shop'){
 if(!shopOn)h+=`<div class="shopbox"><b>Раздел в разработке</b><small>Здесь появятся дополнения для приложения.</small></div>`;
 else{
@@ -1288,7 +1291,7 @@ if(native)h+=row('Виджеты','Цвета — как у обоев. Доба
 h+=row('Офлайн-режим',`<span id="syncInfo">${esc(sync.run?`Загрузка: ${sync.done} из ${sync.total}`:(sync.msg||cacheInfo()))}</span>`,`<button class="lnk" id="syncBtn" data-a="sync">${sync.run?'…':'Загрузить'}</button>`);
 h+=`<div class="bar" id="syncBarWrap" style="margin:-6px 0 8px;display:${sync.run?'block':'none'}"><i id="syncBar" style="width:${sync.total?Math.round(sync.done/sync.total*100):0}%"></i></div>`;
 h+=row('Обновлять при запуске','Докачивать расписание, когда есть интернет',sw('auto'));
-h+=row('Версия '+UI_VERSION+' <span class="beta" style="margin-left:4px">beta</span>',upd?`Доступна версия ${esc(upd.version)} — кнопка «Обновить» на главном экране`:updOk?'Установлена последняя версия ✓':'Обновления ставятся прямо из приложения',`<button class="lnk" data-a="tg">Telegram</button>`);
+h+=row('Версия '+UI_VERSION+' <span class="beta" style="margin-left:4px">'+BETA_LABEL+'</span>',upd?`Доступна версия ${esc(upd.version)} — кнопка «Обновить» на главном экране`:updOk?'Установлена последняя версия ✓':'Обновления ставятся прямо из приложения',`<button class="lnk" data-a="tg">Telegram</button>`);
 $('setsheet').innerHTML=h+'</div>';
 }
 $('bell').onclick=()=>{setTab='rem';bellSnd();if(!sync.run)sync.msg='';renderSet();$('set').classList.add('show')};
