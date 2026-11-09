@@ -15,15 +15,36 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Version (следующий после последнего релиза)
+      - name: Read build config
+        id: cfg
+        run: |
+          MODE=test; PUB=false; UPD=false
+          if [ -f build.config.json ] && jq -e . build.config.json >/dev/null 2>&1; then
+            if [ "$(jq -r '.mode' build.config.json)" = "release" ]; then
+              MODE=release
+              if [ "$(jq -r '.publish_release' build.config.json)" != "false" ]; then PUB=true; fi
+              if [ "$(jq -r '.auto_update' build.config.json)" != "false" ]; then UPD=true; fi
+            fi
+          else
+            echo "::warning::build.config.json не найден или содержит ошибку -> режим test"
+          fi
+          echo "Режим: $MODE, publish_release=$PUB, auto_update=$UPD"
+          { echo "mode=$MODE"; echo "publish_release=$PUB"; echo "auto_update=$UPD"; } >> "$GITHUB_OUTPUT"
+      - name: Version (release — следующий после последнего релиза, test — без изменений)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODE: ${{ steps.cfg.outputs.mode }}
         run: |
           LAST=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' || true)
           N=$(printf '%s' "$LAST" | sed -nE 's/^v0\.5\.([0-9]+)$/\1/p')
-          if [ -n "$N" ]; then NEXT=$(( N + 1 )); else NEXT=0; fi
+          if [ "$MODE" = "release" ]; then
+            if [ -n "$N" ]; then NEXT=$(( N + 1 )); else NEXT=0; fi
+          else
+            # тестовая сборка: номер версии не растёт, остаётся как у последнего релиза
+            if [ -n "$N" ]; then NEXT=$N; else NEXT=0; fi
+          fi
           echo "VERSION_NAME=0.5.$NEXT" >> "$GITHUB_ENV"
-          echo "последний релиз: ${LAST:-нет}"
+          echo "режим: $MODE, последний релиз: ${LAST:-нет}, версия сборки: 0.5.$NEXT"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,6 +57,7 @@ jobs:
           mkdir -p www
           if [ -f index.html ]; then cp index.html www/index.html; else cp "$(ls *.html | head -n1)" www/index.html; fi
           cp -r runners www/runners
+          if [ -d media ]; then cp -r media www/media; fi
           sed -i "s/const APP_VERSION='[^']*'/const APP_VERSION='$VERSION_NAME'/" www/index.html
           grep -c "APP_VERSION='$VERSION_NAME'" www/index.html
       - name: Install Capacitor
@@ -1159,8 +1181,10 @@ jobs:
           name: pmk-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
       - name: Publish release (обновление для пользователей)
+        if: steps.cfg.outputs.publish_release == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTO_UPDATE: ${{ steps.cfg.outputs.auto_update }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           APK="pmk-$VERSION_NAME.apk"
@@ -1169,4 +1193,6 @@ jobs:
           case "$TEXT" in "Add files via upload"*|"Update "*|"Create "*|"Rename "*|"Delete "*) TEXT="";; esac
           jq -n --arg v "$VERSION_NAME" --arg t "$TEXT" --arg u "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION_NAME/$APK" '{version:$v,text:$t,url:$u}' > version.json
           cat version.json
-          gh release create "v$VERSION_NAME" "$APK" version.json --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Версия $VERSION_NAME" --notes "${TEXT:-Обновление}"
+          FILES=("$APK")
+          if [ "$AUTO_UPDATE" = "true" ]; then FILES+=(version.json); fi
+          gh release create "v$VERSION_NAME" "${FILES[@]}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Версия $VERSION_NAME" --notes "${TEXT:-Обновление}"
