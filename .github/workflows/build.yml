@@ -53,6 +53,8 @@ jobs:
           distribution: temurin
           java-version: 21
       - name: Web files
+        env:
+          MODE: ${{ steps.cfg.outputs.mode }}
         run: |
           mkdir -p www
           if [ -f index.html ]; then cp index.html www/index.html; else cp "$(ls *.html | head -n1)" www/index.html; fi
@@ -60,6 +62,10 @@ jobs:
           if [ -d media ]; then cp -r media www/media; fi
           sed -i "s/const APP_VERSION='[^']*'/const APP_VERSION='$VERSION_NAME'/" www/index.html
           grep -c "APP_VERSION='$VERSION_NAME'" www/index.html
+          # в тестовых сборках вместо «beta» в интерфейсе показываем «test»
+          if [ "$MODE" = "release" ]; then CHANNEL=release; else CHANNEL=test; fi
+          sed -i "s/const APP_CHANNEL='[^']*'/const APP_CHANNEL='$CHANNEL'/g" www/index.html
+          grep -c "APP_CHANNEL='$CHANNEL'" www/index.html
       - name: Install Capacitor
         run: |
           npm init -y
