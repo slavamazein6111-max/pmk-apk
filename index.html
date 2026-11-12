@@ -5,7 +5,7 @@
 <script>
 /*const APP_VERSION='0.5.2'*/
 /*const APP_CHANNEL='release'*/
-window.HTML_REV=15;
+window.HTML_REV=16;
 (function(){try{
 if(window.__pmkOta)return;
 var o=JSON.parse(localStorage.getItem('pmk-ota')||'null');
@@ -195,7 +195,7 @@ html.mc .seg button:not(.on):hover{background:#7b86b8!important;color:#ffffa0!im
 html.mc .seg button:active{background:#5a6290!important;color:#ffffa0!important;box-shadow:inset 2px 2px 0 #3b4066,inset -2px -2px 0 #8d96c8!important;transform:translateY(2px)}
 html.mc .seg button.on{background:#4a5380!important;color:#ffffa0!important;box-shadow:inset 2px 2px 0 #2f3560,inset -2px -2px 0 #6d77aa!important}
 html.mc .seg button:not(.on):active{background:#5a6290!important;color:#ffffa0!important;box-shadow:inset 2px 2px 0 #3b4066,inset -2px -2px 0 #8d96c8!important;transform:translateY(2px)}
-</style>
+.mainback{display:inline-flex;align-items:center;margin:2px 0 10px;padding:7px 14px;border-radius:99px;background:var(--accent-soft);color:var(--text);font-size:13.5px;font-weight:650;transition:transform .25s var(--spring)}.mainback[hidden]{display:none}.mainback:active{transform:scale(.94)}.list button.mainpin{margin:4px 0 6px;border-bottom:1px solid var(--line);border-radius:12px 12px 0 0;font-weight:650}.list button.mainpin small{display:block;font-size:12px;font-weight:500;color:var(--muted);margin-top:1px}.pstar{color:#f5a524}html.mc .mainback{background:#6f6f6f!important;color:#e0e0e0!important;border:2px solid #000!important;border-radius:0!important;box-shadow:inset 2px 2px 0 #a0a0a0,inset -2px -2px 0 #3b3b3b!important;text-shadow:2px 2px 0 #3f3f3f}</style>
 <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap" rel="stylesheet">
 </head>
 <body class="pre hb">
@@ -213,6 +213,7 @@ html.mc .seg button:not(.on):active{background:#5a6290!important;color:#ffffa0!i
   <div id="updbox"></div>
   <div class="pickrow"><button class="pick" id="pick" aria-label="Выбрать"><h1 id="ent">…</h1>
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8l5 5 5-5"/></svg></button><button class="star" id="star" aria-label="Сделать основной группой"></button></div>
+  <button class="mainback" id="backmain" hidden></button>
   <div class="sub" id="sub"></div>
   <div id="out"></div>
 </main>
@@ -722,13 +723,17 @@ const q=$('q').value.trim().toLowerCase();
 const list=entities(shMode).filter(([,n])=>n.toLowerCase().includes(q));
 if(!list.length){$('list').innerHTML='<div class="none">Ничего не найдено</div>';return}
 let html='',last=null;
+if(shMode==='group'&&!shCb&&set.main){const mi=list.find(([k])=>k===set.main);
+if(mi){html+=`<button class="mainpin${mi[0]===shCur?' on':''}" data-k="${esc(mi[0])}"><span class="pstar">★</span> ${esc(mi[1])}<small>Основная группа</small></button>`}}
 for(const [k,n] of list){
+if(shMode==='group'&&!shCb&&set.main&&k===set.main)continue;
 if(shMode==='group'){const sec=n.split('-')[0];if(sec!==last){html+=`<h4>${esc(sec)}</h4>`;last=sec}}
 html+=`<button data-k="${esc(k)}"${k===shCur?' class="on"':''}>${esc(n)}</button>`;
 }
 $('list').innerHTML=html;
 }
 $('pick').onclick=()=>openSheet();
+$('backmain').onclick=()=>{if(!set.main)return;st.ent.group=set.main;persist();render()};
 $('q').oninput=fillSheet;
 $('ov').onclick=e=>{if(e.target===$('ov'))closeSheet()};
 $('list').onclick=e=>{const b=e.target.closest('button');if(!b)return;if(shCb){const k=b.dataset.k;closeSheet();shCb(k);return}st.ent[st.mode]=b.dataset.k;closeSheet();persist();render()};
@@ -767,6 +772,8 @@ $('star').style.display=st.mode==='group'?'':'none';
 $('star').classList.toggle('on',on);$('star').textContent=on?'★':'☆';
 $('star').title=on?'Основная группа':'Сделать основной группой';
 $('bell').classList.toggle('on',set.on&&permOK);
+const mb=$('backmain'),showB=st.mode==='group'&&!!set.main&&st.ent.group!==set.main;
+mb.hidden=!showB;if(showB)mb.textContent='★ К моей группе · '+(set.mainName||set.main);
 }
 const myLessons=date=>{const d=days.get(date);return d&&set.main?d.lessons.filter(l=>l.g===set.main):null};
 function summary(date,when,lst){
