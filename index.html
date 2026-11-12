@@ -5,9 +5,12 @@
 <script>
 /*const APP_VERSION='0.5.2'*/
 /*const APP_CHANNEL='release'*/
-window.HTML_REV=16;
+/*const APP_OTA='0'*/
+window.HTML_REV=17;
 (function(){try{
 if(window.__pmkOta)return;
+var K3='const APP_OTA',m3=(document.currentScript.textContent.match(new RegExp(K3+"='([^']*)'"))||[])[1];
+if(m3!=='1'){localStorage.removeItem('pmk-ota');localStorage.removeItem('pmk-ota-try');return}   // OTA выключена: чужой интерфейс не подгружаем и ранее сохранённый стираем
 var o=JSON.parse(localStorage.getItem('pmk-ota')||'null');
 if(!o||!o.html||!(o.rev>window.HTML_REV))return;
 var tr=+localStorage.getItem('pmk-ota-try')||0;
@@ -337,7 +340,7 @@ let set={on:false,main:'',mainName:'',lead:5,eve:true,eveT:'20:00',morn:true,mor
 try{set={...set,...JSON.parse(localStorage.getItem('pmk-set')||'{}')}}catch(e){}
 set.pred=false;
 document.addEventListener('visibilitychange',()=>document.documentElement.classList.toggle('hid',document.hidden));
-const APP_VERSION='0.5.2';const APP_CHANNEL='release';const BETA_LABEL=APP_CHANNEL==='test'?'test':'beta';document.querySelectorAll('.beta').forEach(e=>{e.textContent=BETA_LABEL});const UI_VERSION='0.5.7';
+const APP_VERSION='0.5.2';const APP_CHANNEL='release';const APP_OTA='0';const BETA_LABEL=APP_CHANNEL==='test'?'test':'beta';document.querySelectorAll('.beta').forEach(e=>{e.textContent=BETA_LABEL});const UI_VERSION='0.5.7';
 const TG_URL='https://t.me/slvdevvv';
 const hx=h=>{h=h.replace('#','');if(h.length==3)h=[...h].map(c=>c+c).join('');return[0,2,4].map(i=>parseInt(h.slice(i,i+2),16))};
 const mix=(a,b,t)=>{const A=hx(a),B=hx(b);return'#'+A.map((v,i)=>Math.round(v+(B[i]-v)*t).toString(16).padStart(2,'0')).join('')};
@@ -1169,9 +1172,11 @@ await LN.schedule({notifications:list});
 }
 const OTA_URL='https://raw.githubusercontent.com/slavamazein6111-max/pmk-apk/main/index.html';
 let otaMsg='',otaNew=0,otaBusy=false;
+if(APP_OTA!=='1'){try{localStorage.removeItem('pmk-ota');localStorage.removeItem('pmk-ota-try')}catch(e){}}   // автообновление интерфейса выключено сборкой
 try{const o=JSON.parse(localStorage.getItem('pmk-ota')||'null');if(o&&o.rev>window.HTML_REV)otaNew=o.rev}catch(e){}
 setTimeout(()=>{try{localStorage.setItem('pmk-ota-try','0')}catch(e){}},6000);   // запуск удался — сбрасываем счётчик аварийного отката
 async function checkHtml(manual){
+if(APP_OTA!=='1'){otaMsg=manual?'Автообновление интерфейса отключено в этой сборке':'';return}
 if(otaBusy)return;otaBusy=true;
 try{
 if(manual)otaMsg='Проверяю…';
