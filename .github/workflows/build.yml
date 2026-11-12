@@ -18,7 +18,7 @@ jobs:
       - name: Read build config
         id: cfg
         run: |
-          MODE=test; PUB=false; UPD=false
+          MODE=test; PUB=false; UPD=false; OTA=false
           if [ -f build.config.json ] && jq -e . build.config.json >/dev/null 2>&1; then
             if [ "$(jq -r '.mode' build.config.json)" = "release" ]; then
               MODE=release
@@ -28,8 +28,10 @@ jobs:
           else
             echo "::warning::build.config.json не найден или содержит ошибку -> режим test"
           fi
-          echo "Режим: $MODE, publish_release=$PUB, auto_update=$UPD"
-          { echo "mode=$MODE"; echo "publish_release=$PUB"; echo "auto_update=$UPD"; } >> "$GITHUB_OUTPUT"
+          # автообновление интерфейса (OTA): только в test-сборках и только при "ota_update": true; в release всегда выключено
+          if [ "$MODE" = "test" ] && [ "$(jq -r '.ota_update' build.config.json 2>/dev/null)" = "true" ]; then OTA=true; fi
+          echo "Режим: $MODE, publish_release=$PUB, auto_update=$UPD, ota_update=$OTA"
+          { echo "mode=$MODE"; echo "publish_release=$PUB"; echo "auto_update=$UPD"; echo "ota=$OTA"; } >> "$GITHUB_OUTPUT"
       - name: Version (release — следующий после последнего релиза, test — без изменений)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,6 +57,7 @@ jobs:
       - name: Web files
         env:
           MODE: ${{ steps.cfg.outputs.mode }}
+          OTA: ${{ steps.cfg.outputs.ota }}
         run: |
           mkdir -p www
           if [ -f index.html ]; then cp index.html www/index.html; else cp "$(ls *.html | head -n1)" www/index.html; fi
@@ -66,6 +69,9 @@ jobs:
           if [ "$MODE" = "release" ]; then CHANNEL=release; else CHANNEL=test; fi
           sed -i "s/const APP_CHANNEL='[^']*'/const APP_CHANNEL='$CHANNEL'/g" www/index.html
           grep -c "APP_CHANNEL='$CHANNEL'" www/index.html
+          if [ "$OTA" = "true" ]; then OTAV=1; else OTAV=0; fi
+          sed -i "s/const APP_OTA='[^']*'/const APP_OTA='$OTAV'/g" www/index.html
+          grep -c "APP_OTA='$OTAV'" www/index.html
       - name: Install Capacitor
         run: |
           npm init -y
